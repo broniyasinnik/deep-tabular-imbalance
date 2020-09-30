@@ -1,5 +1,5 @@
 import pytest
-from evaluation import binary_classification
+from benchmarks import binary_classification
 
 
 def test_binary_classification(adult_train_test):

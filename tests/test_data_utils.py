@@ -7,7 +7,7 @@ from data_utils import ctgan_syntesize
 @pytest.mark.parametrize("ratio", [0.1, 0.01, 0.001])
 def test_minority_data_undersample(ratio, adult):
     train, _, meta, _, _ = adult
-    y_train = label_column(train, meta)
+    y_train, index = label_column(train, meta)
     _, counts = np.unique(y_train, return_counts=True)
     minority_count = np.min(counts)
     majority_count = np.sum(counts) - minority_count
