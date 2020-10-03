@@ -14,6 +14,6 @@ def fixture_adult_train_test(adult):
     fm = FeatureMaker(meta)
     x_train, y_train = fm.make_features(train)
     x_test, y_test = fm.make_features(test)
-    return x_train, y_train, y_train, y_test
+    return x_train, y_train, x_test, y_test
 
 

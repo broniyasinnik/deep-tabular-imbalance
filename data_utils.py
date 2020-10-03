@@ -17,6 +17,7 @@ def label_column(data: np.array, metadata: Dict):
             return labels, index
 
 
+
 def minority_data_undersample(data: np.array, meta: np.array, ratio: float):
     y, index = label_column(data, meta)
     values, counts = np.unique(y, return_counts=True)
@@ -31,9 +32,22 @@ def minority_data_undersample(data: np.array, meta: np.array, ratio: float):
     ids = np.concatenate([majority_ids, new_minority_ids])
     return data[ids]
 
+def majority_data_undersample(data: np.array, meta: np.array, ratio: float):
+    y, index = label_column(data, meta)
+    values, counts = np.unique(y, return_counts=True)
+    majority_idx = np.argmax(counts)
+    majority_value = values[majority_idx]
+    majority_ids, = np.where(y == majority_value)
+    minority_ids, = np.where(y != majority_value)
+    num_majority_samples = int(np.floor(majority_ids.size * ratio))
+    print(f"The number of undersampled majority:{num_majority_samples}")
+    new_majority_ids = np.random.choice(majority_ids, num_majority_samples, replace=False)
+    ids = np.concatenate([new_majority_ids, minority_ids])
+    return data[ids]
+
 
 def ctgan_syntesize(data, categorical_columns, ordinal_columns):
-    synthesizer = CTGANSynthesizer(epochs=1)
+    synthesizer = CTGANSynthesizer(epochs=300)
     syntetic_data = synthesizer.fit_sample(data, categorical_columns, ordinal_columns)
     return syntetic_data
 
