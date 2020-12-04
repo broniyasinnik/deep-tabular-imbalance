@@ -1,13 +1,13 @@
 import torch
 from runners import CustomRunner
-from catalyst import dl
+import catalyst.dl as dl
 from catalyst.callbacks.metrics.precision import AveragePrecisionCallback
 from models.metrics import f1_score
 from models.networks import TabularModel
 from pathlib import Path
 from torch.utils.data import DataLoader
 from models.transforms import ToTensor, ScalerTransform, Compose
-from datasets import AdultDataSet
+from datasets import AdultDataSet, DatasetImbalanced
 
 root = Path.cwd().parent / 'BenchmarkData' / 'adult'
 adult_train = AdultDataSet(root, train=True,
@@ -15,6 +15,8 @@ adult_train = AdultDataSet(root, train=True,
 
 feat_transform = Compose([ScalerTransform(adult_train.data, features=adult_train.continuous_cols), ToTensor()])
 adult_train.transform = feat_transform
+# Creating imbalanced adult dataset
+adult_train = DatasetImbalanced(num_minority=1000)(adult_train)
 
 adult_test = AdultDataSet(root, train=False,
                           transform=feat_transform,

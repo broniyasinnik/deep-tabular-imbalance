@@ -1,7 +1,7 @@
 import torch
 from typing import List
 import numpy as np
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder
 
 
 class ToTensor(object):
@@ -12,13 +12,28 @@ class ToTensor(object):
         return torch.from_numpy(arr).type(dtype)
 
 
+class OneHotTransform:
+    def __init__(self, data: np.array, cat_features: List = None):
+        self.cat_features = cat_features
+        self.encoder = OneHotEncoder()
+        self.encoder.fit(data[:, cat_features])
+
+    def __call__(self, data):
+        _data = data.copy()
+        cat_feat = _data[self.cat_features].reshape(1, -1)
+        cat_feat = self.encoder.transform(cat_feat).toarray()
+        _data = np.delete(_data, self.cat_features)
+        _data = np.concatenate((_data, cat_feat.astype(np.float32).squeeze()))
+        return _data
+
+
 class ScalerTransform:
     SCALERS = {
         'standard': StandardScaler,
         'min_max': MinMaxScaler
     }
 
-    def __init__(self, data: np.array, features: List = None, type: str='min_max'):
+    def __init__(self, data: np.array, features: List = None, type: str = 'min_max'):
         self.scaler = self.SCALERS[type]()
         self.features = list(range(data.shape[1]))
         if features is not None:

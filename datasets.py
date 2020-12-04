@@ -186,8 +186,8 @@ class DatasetImbalanced:
         values, counts = np.unique(dataset.target, return_counts=True)
         min_idx = np.argmin(counts)
         minority_value = values[min_idx]
-        minority_ids, _ = np.where(dataset.target == minority_value)
-        majority_ids, _ = np.where(dataset.target != minority_value)
+        minority_ids, = np.where(dataset.target == minority_value)
+        majority_ids, = np.where(dataset.target != minority_value)
         num_minority_samples = min(minority_ids.size, self.num_minority)
         new_minority_ids = np.random.choice(minority_ids, num_minority_samples, replace=False)
         ids = np.concatenate([majority_ids, new_minority_ids])

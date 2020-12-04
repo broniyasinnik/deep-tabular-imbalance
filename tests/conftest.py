@@ -32,6 +32,5 @@ def fixture_shuttle():
 @pytest.fixture(name='adult')
 def fixture_adult():
     root = Path.cwd()/'BenchmarkData/adult'
-    adult = AdultDataSet(root, train=True,
-                         transform=ToTensor(), target_transform=ToTensor())
+    adult = AdultDataSet(root, train=True)
     return adult
