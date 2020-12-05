@@ -22,4 +22,5 @@ def test_dataset_ssl(adult):
 
 def test_dataset_imbalanced(adult):
     imb_adult = DatasetImbalanced(num_minority=1000)(adult)
-    assert imb_adult.targets.sum() == 1000
+    assert hasattr(imb_adult, "weight_pos")
+    assert imb_adult.target.sum() == 1000

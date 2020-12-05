@@ -1,5 +1,5 @@
 import torch
-from catalyst import dl
+import catalyst.dl as dl
 
 
 class CustomRunner(dl.Runner):
@@ -8,7 +8,7 @@ class CustomRunner(dl.Runner):
         return self.model(batch[0].to(self.device), batch[1].to(self.device))
 
     def _handle_batch(self, batch):
-        x_cat, x_cont, y = batch
-        y_hat = self.model(x_cat.type(torch.long), x_cont).squeeze()
-        self.state.input = {"features_cat": x_cat, "features_cont": x_cont, "targets": y}
+        x, y = batch
+        y_hat = self.model(x).squeeze()
+        self.state.input = {"features": x, "targets": y}
         self.state.output = {"logits": y_hat}

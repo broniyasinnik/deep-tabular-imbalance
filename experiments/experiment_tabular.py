@@ -16,6 +16,7 @@ adult_train = AdultDataSet(root, train=True,
 feat_transform = Compose([ScalerTransform(adult_train.data, features=adult_train.continuous_cols), ToTensor()])
 adult_train.transform = feat_transform
 # Creating imbalanced adult dataset
+
 adult_train = DatasetImbalanced(num_minority=1000)(adult_train)
 
 adult_test = AdultDataSet(root, train=False,
@@ -27,7 +28,8 @@ loaders = {
     "valid": DataLoader(adult_test, batch_size=32)
 }
 
-model = TabularModel(adult_train.embeds, adult_test.num_continuous, out_sz=1, layers=[100])
+model = TabularModel(adult_train.categorical_cols, adult_train.continuous_cols,
+                     adult_train.embeds, out_sz=1, layers=[100])
 
 optimizer = torch.optim.Adam(model.parameters(), lr=0.005)
 criterion = torch.nn.BCELoss()

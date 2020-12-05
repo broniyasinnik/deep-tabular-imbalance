@@ -2,24 +2,43 @@ import torch
 import torch.nn as nn
 import numpy as np
 from torch import distributions
+from typing import List, Tuple
+
+
+class MLP(nn.Module):
+    def __init__(self, layers):
+        super(MLP, self).__init__()
+        self.layers = []
+        for i in range(1, len(layers)):
+            self.layers += [nn.Linear(layers[i - 1], layers[i]), nn.Sigmoid()]
+        self.mlp = nn.Sequential(*self.layers)
+
+    def forward(self, x):
+        return self.mlp(x)
 
 
 class TabularModel(nn.Module):
     """Basic model for tabular data."""
 
-    def __init__(self, emb_szs, n_cont, out_sz, layers, embed_p=0.):
+    def __init__(self, cat_feats: List[int], cont_feats: List[int],
+                 emb_szs: List[Tuple[int, int]], out_sz, layers, embed_p=0.):
         super(TabularModel, self).__init__()
+        n_cont = len(cont_feats)
+        self.cat_feats = cat_feats
+        self.cont_feats = cont_feats
         self.embeds = nn.ModuleList([nn.Embedding(ni, nf) for ni, nf in emb_szs])
         self.emb_drop = nn.Dropout(embed_p)
         n_emb = sum(e.embedding_dim for e in self.embeds)
         self.n_emb, self.n_cont = n_emb, n_cont
         sizes = [n_emb + n_cont] + layers + [out_sz]
         _layers = []
-        for i in range(len(sizes)-1):
-            _layers += [nn.Linear(sizes[i], sizes[i+1]), nn.Sigmoid()]
+        for i in range(len(sizes) - 1):
+            _layers += [nn.Linear(sizes[i], sizes[i + 1]), nn.Sigmoid()]
         self.layers = nn.Sequential(*_layers)
 
-    def forward(self, x_cat, x_cont=None):
+    def forward(self, x):
+        x_cat = x[:, self.cat_feats].type(torch.long)
+        x_cont = x[:, self.cont_feats]
         if self.n_emb != 0:
             x = [e(x_cat[:, i]) for i, e in enumerate(self.embeds)]
             x = torch.cat(x, 1)

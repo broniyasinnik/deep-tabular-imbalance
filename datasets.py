@@ -72,8 +72,6 @@ class DeprecatedDataset(Dataset):
             return self._test_dataset[item]
 
 
-
-
 class UCIDataset(Dataset):
 
     @property
@@ -150,7 +148,7 @@ class AdultDataSet(UCIDataset):
         if self.target_transform is not None:
             label = self.target_transform(label)
 
-        return row[self.categorical_cols], row[self.continuous_cols], label
+        return row, label
 
 
 class ShuttleDataset(UCIDataset):
@@ -189,10 +187,13 @@ class DatasetImbalanced:
         minority_ids, = np.where(dataset.target == minority_value)
         majority_ids, = np.where(dataset.target != minority_value)
         num_minority_samples = min(minority_ids.size, self.num_minority)
+        num_majority_samples = majority_ids.size
         new_minority_ids = np.random.choice(minority_ids, num_minority_samples, replace=False)
         ids = np.concatenate([majority_ids, new_minority_ids])
         dataset.data = dataset.data[ids]
         dataset.target = dataset.target[ids]
+        weight_pos = num_majority_samples / num_minority_samples
+        setattr(dataset, "weight_pos", weight_pos)
         return dataset
 
 
