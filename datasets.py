@@ -75,14 +75,6 @@ class DeprecatedDataset(Dataset):
 class UCIDataset(Dataset):
 
     @property
-    def num_continuous(self):
-        return len(self._continuous_cols)
-
-    @property
-    def num_categorical(self):
-        return len(self._categorical_cols)
-
-    @property
     def embeds(self) -> List[Tuple[int, int]]:
         return self._embeds
 
@@ -94,10 +86,15 @@ class UCIDataset(Dataset):
     def continuous_cols(self) -> List[int]:
         return self._continuous_cols
 
+    @property
+    def categories_sizes(self) -> List[int]:
+        return self._categories_sizes
+
     def _read_config(self, config_file):
         with open(config_file) as f:
             config = json.load(f)
         self._categorical_cols = []
+        self._categories_sizes = []
         self._continuous_cols = []
         self._embeds = []
         for i, col in enumerate(config):
@@ -109,6 +106,7 @@ class UCIDataset(Dataset):
                 self._categorical_cols.append(i)
                 size, embed = col.get('size', 0), col.get('embed', 0)
                 self._embeds.append((size, embed))
+                self._categories_sizes.append(size)
 
 
 class AdultDataSet(UCIDataset):
@@ -119,7 +117,6 @@ class AdultDataSet(UCIDataset):
     def __init__(self, root: str, train: bool = True, transform=None, target_transform=None):
         self.root = root
         self.train = train
-        self.scale = True
         self.transform = transform
         self.target_transform = target_transform
 
@@ -176,8 +173,8 @@ class ShuttleDataset(UCIDataset):
 
 
 class DatasetImbalanced:
-    def __init__(self, num_minority: int = 1000):
-        self.num_minority = num_minority
+    def __init__(self, imbalance_ratio: float = None):
+        self.imbalance_ratio = imbalance_ratio
 
     def __call__(self, dataset: UCIDataset):
         dataset = deepcopy(dataset)
@@ -186,14 +183,22 @@ class DatasetImbalanced:
         minority_value = values[min_idx]
         minority_ids, = np.where(dataset.target == minority_value)
         majority_ids, = np.where(dataset.target != minority_value)
-        num_minority_samples = min(minority_ids.size, self.num_minority)
+        if self.imbalance_ratio is not None:
+            num_minority = int(self.imbalance_ratio * majority_ids.size)
+        else:
+            num_minority = minority_ids.size
+        num_minority_samples = min(minority_ids.size, num_minority)
         num_majority_samples = majority_ids.size
         new_minority_ids = np.random.choice(minority_ids, num_minority_samples, replace=False)
         ids = np.concatenate([majority_ids, new_minority_ids])
         dataset.data = dataset.data[ids]
         dataset.target = dataset.target[ids]
-        weight_pos = num_majority_samples / num_minority_samples
-        setattr(dataset, "weight_pos", weight_pos)
+        pos_weight = num_majority_samples / (num_minority_samples + num_majority_samples)
+        neg_weight = num_minority_samples / (num_majority_samples + num_minority_samples)
+        setattr(dataset, "num_minority", num_minority_samples)
+        setattr(dataset, "num_majority", num_majority_samples)
+        setattr(dataset, "pos_weight", pos_weight)
+        setattr(dataset, "neg_weight", neg_weight)
         return dataset
 
 

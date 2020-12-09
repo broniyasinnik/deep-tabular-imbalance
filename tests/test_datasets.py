@@ -1,3 +1,4 @@
+import pytest
 from torch.utils.data import DataLoader
 from datasets import MoonsDataset, DatasetSSL, DatasetImbalanced
 from catalyst import data
@@ -20,7 +21,11 @@ def test_dataset_ssl(adult):
     dataset.split_to_labeled_unlabeled(100)
     assert True
 
-def test_dataset_imbalanced(adult):
-    imb_adult = DatasetImbalanced(num_minority=1000)(adult)
-    assert hasattr(imb_adult, "weight_pos")
-    assert imb_adult.target.sum() == 1000
+@pytest.mark.parametrize("ratio", [None, 0.1])
+def test_dataset_imbalanced(adult, ratio):
+    imb_adult = DatasetImbalanced(imbalance_ratio=ratio)(adult)
+    assert hasattr(imb_adult, "pos_weight")
+    assert hasattr(imb_adult, "neg_weight")
+    assert hasattr(imb_adult, "num_minority")
+    assert hasattr(imb_adult, "num_majority")
+    assert imb_adult.target.sum() == imb_adult.num_minority

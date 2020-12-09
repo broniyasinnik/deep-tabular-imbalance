@@ -13,16 +13,28 @@ class ToTensor(object):
 
 
 class OneHotTransform:
-    def __init__(self, data: np.array, cat_features: List = None):
-        self.cat_features = cat_features
-        self.encoder = OneHotEncoder()
-        self.encoder.fit(data[:, cat_features])
+    def __init__(self, categorical_columns: List[int], categories_sizes: List[int] = None):
+        self.categorical_columns = categorical_columns
+        self.categories_sizes = categories_sizes
+        self.encoder = None
+        # categories = [np.arange(cat_size) for cat_size in categories_sizes]
+        # self.encoder = OneHotEncoder(categories=categories)
+
+    @classmethod
+    def from_data(cls, data: np.array, categorical_columns: List[int]):
+        self = cls(categorical_columns)
+        self.encoder = OneHotEncoder(handle_unknown="ignore")
+        self.encoder.fit(data[:, categorical_columns])
 
     def __call__(self, data):
         _data = data.copy()
-        cat_feat = _data[self.cat_features].reshape(1, -1)
-        cat_feat = self.encoder.transform(cat_feat).toarray()
-        _data = np.delete(_data, self.cat_features)
+        cat_feat = _data[self.categorical_columns].astype(np.int)
+        one_hot_features = [np.squeeze(np.eye(size)[cat]) for cat, size in zip(cat_feat, self.categories_sizes)]
+        if self.encoder:
+            cat_feat = self.encoder.transform(cat_feat.reshape(1, -1)).toarray()
+        else:
+            cat_feat = np.concatenate(one_hot_features)
+        _data = np.delete(_data, self.categorical_columns)
         _data = np.concatenate((_data, cat_feat.astype(np.float32).squeeze()))
         return _data
 

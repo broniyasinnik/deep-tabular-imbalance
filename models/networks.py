@@ -6,11 +6,15 @@ from typing import List, Tuple
 
 
 class MLP(nn.Module):
-    def __init__(self, layers):
+    def __init__(self, in_features: int, out_features: int, hidden_layers: List[int]):
         super(MLP, self).__init__()
         self.layers = []
-        for i in range(1, len(layers)):
-            self.layers += [nn.Linear(layers[i - 1], layers[i]), nn.Sigmoid()]
+        hidden_layers.insert(0, in_features)
+        hidden_layers.append(out_features)
+        for i in range(1, len(hidden_layers)):
+            self.layers += [nn.Linear(hidden_layers[i - 1], hidden_layers[i]), nn.ReLU()]
+            self.layers.append(nn.BatchNorm1d(hidden_layers[i]))
+        self.layers.pop(-1)
         self.mlp = nn.Sequential(*self.layers)
 
     def forward(self, x):
@@ -33,7 +37,8 @@ class TabularModel(nn.Module):
         sizes = [n_emb + n_cont] + layers + [out_sz]
         _layers = []
         for i in range(len(sizes) - 1):
-            _layers += [nn.Linear(sizes[i], sizes[i + 1]), nn.Sigmoid()]
+            _layers += [nn.Linear(sizes[i], sizes[i + 1]), nn.Tanh()]
+        _layers.pop(-1)
         self.layers = nn.Sequential(*_layers)
 
     def forward(self, x):
