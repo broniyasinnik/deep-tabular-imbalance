@@ -16,12 +16,14 @@ def test_shuttle_scale_features(shuttle):
     shuttle.scale_features(features_to_scale, scale_type='standard')
     assert True
 
+
 def test_dataset_ssl(adult):
     dataset = DatasetSSL(adult)
     dataset.split_to_labeled_unlabeled(100)
     assert True
 
-@pytest.mark.parametrize("ratio", [None, 0.1])
+
+@pytest.mark.parametrize("ratio", [None, 1, 0.1, 0.7])
 def test_dataset_imbalanced(adult, ratio):
     imb_adult = DatasetImbalanced(imbalance_ratio=ratio)(adult)
     assert hasattr(imb_adult, "pos_weight")
@@ -29,3 +31,5 @@ def test_dataset_imbalanced(adult, ratio):
     assert hasattr(imb_adult, "num_minority")
     assert hasattr(imb_adult, "num_majority")
     assert imb_adult.target.sum() == imb_adult.num_minority
+    if ratio is not None:
+        assert abs(imb_adult.num_minority / imb_adult.num_majority - ratio) < 0.01

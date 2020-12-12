@@ -12,9 +12,10 @@ class MLP(nn.Module):
         hidden_layers.insert(0, in_features)
         hidden_layers.append(out_features)
         for i in range(1, len(hidden_layers)):
-            self.layers += [nn.Linear(hidden_layers[i - 1], hidden_layers[i]), nn.ReLU()]
-            self.layers.append(nn.BatchNorm1d(hidden_layers[i]))
-        self.layers.pop(-1)
+            self.layers.append(nn.Linear(hidden_layers[i - 1], hidden_layers[i]))
+            if i != len(hidden_layers)-1:
+                self.layers.append(nn.ReLU())
+                self.layers.append(nn.BatchNorm1d(hidden_layers[i]))
         self.mlp = nn.Sequential(*self.layers)
 
     def forward(self, x):

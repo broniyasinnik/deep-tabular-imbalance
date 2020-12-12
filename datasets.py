@@ -183,14 +183,23 @@ class DatasetImbalanced:
         minority_value = values[min_idx]
         minority_ids, = np.where(dataset.target == minority_value)
         majority_ids, = np.where(dataset.target != minority_value)
-        if self.imbalance_ratio is not None:
-            num_minority = int(self.imbalance_ratio * majority_ids.size)
-        else:
-            num_minority = minority_ids.size
-        num_minority_samples = min(minority_ids.size, num_minority)
+
+        num_minority_samples = minority_ids.size
         num_majority_samples = majority_ids.size
+        dataset_ir = num_minority_samples/num_majority_samples
+        if self.imbalance_ratio is not None:
+            assert 0 <= self.imbalance_ratio <= 1, "Imbalance Ratio should be between 0, 1"
+            # rebalance the minority class
+            if self.imbalance_ratio <= dataset_ir:
+                num_minority = int(self.imbalance_ratio * majority_ids.size)
+                num_minority_samples = min(minority_ids.size, num_minority)
+            else:
+                num_majority = int((1/self.imbalance_ratio) * minority_ids.size)
+                num_majority_samples = min(majority_ids.size, num_majority)
+
         new_minority_ids = np.random.choice(minority_ids, num_minority_samples, replace=False)
-        ids = np.concatenate([majority_ids, new_minority_ids])
+        new_majority_ids = np.random.choice(majority_ids, num_majority_samples, replace=False)
+        ids = np.concatenate([new_majority_ids, new_minority_ids])
         dataset.data = dataset.data[ids]
         dataset.target = dataset.target[ids]
         pos_weight = num_majority_samples / (num_minority_samples + num_majority_samples)
