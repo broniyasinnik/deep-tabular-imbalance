@@ -1,10 +1,8 @@
 import torch
-import numpy as np
 from runners import CustomRunner, LogPRCurve
 import catalyst.dl as dl
 from catalyst.dl.callbacks import CheckpointCallback
-from models.networks import TabularModel, MLP
-from catalyst.contrib.nn import FocalLossBinary
+from models.networks import MLP
 from models.metrics import average_precision_metric
 from collections import OrderedDict
 from pathlib import Path
@@ -26,8 +24,8 @@ adult_test = AdultDataSet(root, train=False,
                           target_transform=ToTensor())
 
 # Creating imbalanced adult dataset
-adult_train = DatasetImbalanced(imbalance_ratio=None)(adult_train)
-adult_test = DatasetImbalanced(imbalance_ratio=None)(adult_test)
+adult_train = DatasetImbalanced(imbalance_ratio=1)(adult_train)
+adult_test = DatasetImbalanced(imbalance_ratio=1)(adult_test)
 
 loaders = {
     "train": DataLoader(adult_train, batch_size=32, shuffle=True),
@@ -35,7 +33,7 @@ loaders = {
 }
 
 # model = TabularModel(adult_train.categorical_cols, adult_train.continuous_cols,
-#                      adult_train.embeds, out_sz=1, layers=[100])
+#                      adult_train.embeds, out_sz=1, layers=[100, 50])
 model = MLP(in_features=108, out_features=1, hidden_layers=[100, 50])
 
 optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
@@ -90,5 +88,5 @@ runner.infer(model=model,
 
 # predictions = np.vstack(list(map(
 #     lambda x: x.cpu().numpy(),
-#     runner.predict_loader(loader=loaders["valid"], resume=f"{log_dir}/checkpoints/best.pth")
+#     runner.predict_loader(loader=loaders["valid"], resume=f"{log_dir}/checkpoints/cgan_best.pth")
 # )))

@@ -1,0 +1,122 @@
+[
+  {
+    "name": "radius_mean",
+    "type": "continuous"
+  },
+  {
+    "name": "texture_mean",
+    "type": "continuous"
+  },
+  {
+    "name": "perimeter_mean",
+    "type": "continuous"
+  },
+  {
+    "name": "area_mean",
+    "type": "continuous"
+  },
+  {
+    "name": "smoothness_mean",
+    "type": "continuous"
+  },
+  {
+    "name": "compactness_mean",
+    "type": "continuous"
+  },
+  {
+    "name": "concavity_mean",
+    "type": "continuous"
+  },
+  {
+    "name": "concave points_mean",
+    "type": "continuous"
+  },
+  {
+    "name": "symmetry_mean",
+    "type": "continuous"
+  },
+  {
+    "name": "fractal_dimension_mean",
+    "type": "continuous"
+  },
+  {
+    "name": "radius_se",
+    "type": "continuous"
+  },
+  {
+    "name": "texture_se",
+    "type": "continuous"
+  },
+  {
+    "name": "perimeter_se",
+    "type": "continuous"
+  },
+  {
+    "name": "area_se",
+    "type": "continuous"
+  },
+  {
+    "name": "smoothness_se",
+    "type": "continuous"
+  },
+  {
+    "name": "compactness_se",
+    "type": "continuous"
+  },
+  {
+    "name": "concavity_se",
+    "type": "continuous"
+  },
+  {
+    "name": "concave points_se",
+    "type": "continuous"
+  },
+  {
+    "name": "symmetry_se",
+    "type": "continuous"
+  },
+  {
+    "name": "fractal_dimension_se",
+    "type": "continuous"
+  },
+  {
+    "name": "radius_worst",
+    "type": "continuous"
+  },
+  {
+    "name": "texture_worst",
+    "type": "continuous"
+  },
+  {
+    "name": "perimeter_worst",
+    "type": "continuous"
+  },
+  {
+    "name": "area_worst",
+    "type": "continuous"
+  },
+  {
+    "name": "smoothness_worst",
+    "type": "continuous"
+  },
+  {
+    "name": "compactness_worst",
+    "type": "continuous"
+  },
+  {
+    "name": "concavity_worst",
+    "type": "continuous"
+  },
+  {
+    "name": "concave points_worst",
+    "type": "continuous"
+  },
+  {
+    "name": "symmetry_worst",
+    "type": "continuous"
+  },
+  {
+    "name": "fractal_dimension_worst",
+    "type": "continuous"
+  }
+]

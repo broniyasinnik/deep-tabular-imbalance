@@ -22,6 +22,9 @@ def test_dataset_ssl(adult):
     dataset.split_to_labeled_unlabeled(100)
     assert True
 
+def test_dataset_adult(adult):
+    loader = DataLoader(adult, batch_size=10)
+    print(next(iter(loader)))
 
 @pytest.mark.parametrize("ratio", [None, 1, 0.1, 0.7])
 def test_dataset_imbalanced(adult, ratio):
@@ -33,3 +36,9 @@ def test_dataset_imbalanced(adult, ratio):
     assert imb_adult.target.sum() == imb_adult.num_minority
     if ratio is not None:
         assert abs(imb_adult.num_minority / imb_adult.num_majority - ratio) < 0.01
+
+
+def test_dataset_imbalanced_complement(adult):
+    imb_adult, complement = DatasetImbalanced(imbalance_ratio=0.1)(adult, return_the_complement=True)
+    assert imb_adult.data.shape[0] + complement.data.shape[0] == adult.data.shape[0]
+    assert imb_adult.target.sum() + complement.target.sum() == adult.target.sum()

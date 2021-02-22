@@ -3,9 +3,10 @@ import torch
 import numpy as np
 import pandas as pd
 import json
+import random
 from typing import List, Tuple, Dict, Any
 from copy import deepcopy
-from sklearn.datasets import make_moons
+from sklearn.datasets import make_moons, make_circles
 from torch.utils.data import Dataset
 from torch.utils.data import TensorDataset
 
@@ -109,6 +110,45 @@ class UCIDataset(Dataset):
                 self._categories_sizes.append(size)
 
 
+class CirclesDataSet(Dataset):
+
+    def make_dataset(self, seed):
+        np.random.seed(seed)
+        random.seed(seed)
+        X, y = make_circles(n_samples=self.n_samples, factor=self.factor, noise=self.noise)
+        return X, y
+
+    def __init__(self, train: bool = True, n_samples=int(1e3), factor: int = 0.7, noise: int = 0.05, transform=None,
+                 target_transform=None):
+        self.train = train
+        self.n_samples = n_samples
+        self.factor = factor
+        self.noise = noise
+        self.transform = transform
+        self.target_transform = target_transform
+        if self.train:
+            X, y = self.make_dataset(seed=42)
+            self.data = X
+            self.target = y
+        else:
+            X, y = self.make_dataset(seed=137)
+            self.data = X
+            self.target = y
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, item):
+        point, label = self.data[item], self.target[item]
+        if self.transform is not None:
+            point = self.transform(point)
+        if self.target_transform is not None:
+            label = self.target_transform(label)
+
+        sample = {"input": point, "label": label}
+        return sample
+
+
 class AdultDataSet(UCIDataset):
     training_file = 'adult.trn.npz'
     test_file = 'adult.tst.npz'
@@ -145,7 +185,8 @@ class AdultDataSet(UCIDataset):
         if self.target_transform is not None:
             label = self.target_transform(label)
 
-        return row, label
+        sample = {"input": row, "label": label}
+        return sample
 
 
 class ShuttleDataset(UCIDataset):
@@ -173,20 +214,18 @@ class ShuttleDataset(UCIDataset):
 
 
 class DatasetImbalanced:
-    def __init__(self, imbalance_ratio: float = None):
+    def __init__(self, imbalance_ratio: float = None, pos_label: int = 1):
         self.imbalance_ratio = imbalance_ratio
+        self.pos_label = pos_label
 
-    def __call__(self, dataset: UCIDataset):
+    def __call__(self, dataset: UCIDataset, return_the_complement: bool = False):
         dataset = deepcopy(dataset)
-        values, counts = np.unique(dataset.target, return_counts=True)
-        min_idx = np.argmin(counts)
-        minority_value = values[min_idx]
-        minority_ids, = np.where(dataset.target == minority_value)
-        majority_ids, = np.where(dataset.target != minority_value)
+        minority_ids, = np.where(dataset.target == self.pos_label)
+        majority_ids, = np.where(dataset.target != self.pos_label)
 
         num_minority_samples = minority_ids.size
         num_majority_samples = majority_ids.size
-        dataset_ir = num_minority_samples/num_majority_samples
+        dataset_ir = num_minority_samples / num_majority_samples
         if self.imbalance_ratio is not None:
             assert 0 <= self.imbalance_ratio <= 1, "Imbalance Ratio should be between 0, 1"
             # rebalance the minority class
@@ -194,20 +233,29 @@ class DatasetImbalanced:
                 num_minority = int(self.imbalance_ratio * majority_ids.size)
                 num_minority_samples = min(minority_ids.size, num_minority)
             else:
-                num_majority = int((1/self.imbalance_ratio) * minority_ids.size)
+                num_majority = int((1 / self.imbalance_ratio) * minority_ids.size)
                 num_majority_samples = min(majority_ids.size, num_majority)
 
         new_minority_ids = np.random.choice(minority_ids, num_minority_samples, replace=False)
         new_majority_ids = np.random.choice(majority_ids, num_majority_samples, replace=False)
         ids = np.concatenate([new_majority_ids, new_minority_ids])
+        if return_the_complement:
+            complement_ids = np.setdiff1d(np.arange(dataset.data.shape[0]), ids)
+            complement_dataset = deepcopy(dataset)
+            complement_dataset.data = dataset.data[complement_ids]
+            complement_dataset.target = dataset.target[complement_ids]
         dataset.data = dataset.data[ids]
         dataset.target = dataset.target[ids]
-        pos_weight = num_majority_samples / (num_minority_samples + num_majority_samples)
-        neg_weight = num_minority_samples / (num_majority_samples + num_minority_samples)
+        pos_weight = num_majority_samples / num_minority_samples
+        neg_weight = num_minority_samples / num_majority_samples
         setattr(dataset, "num_minority", num_minority_samples)
         setattr(dataset, "num_majority", num_majority_samples)
         setattr(dataset, "pos_weight", pos_weight)
         setattr(dataset, "neg_weight", neg_weight)
+
+        if return_the_complement:
+            return dataset, complement_dataset
+
         return dataset
 
 

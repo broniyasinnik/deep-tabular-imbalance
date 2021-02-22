@@ -1,0 +1,119 @@
+[
+    {
+        "name": "V1",
+        "type": "continuous"
+    },
+    {
+        "name": "V2",
+        "type": "continuous"
+    },
+    {
+        "name": "V3",
+        "type": "continuous"
+    },
+    {
+        "name": "V4",
+        "type": "continuous"
+    },
+    {
+        "name": "V5",
+        "type": "continuous"
+    },
+    {
+        "name": "V6",
+        "type": "continuous"
+    },
+    {
+        "name": "V7",
+        "type": "continuous"
+    },
+    {
+        "name": "V8",
+        "type": "continuous"
+    },
+    {
+        "name": "V9",
+        "type": "continuous"
+    },
+    {
+        "name": "V10",
+        "type": "continuous"
+    },
+    {
+        "name": "V11",
+        "type": "continuous"
+    },
+    {
+        "name": "V12",
+        "type": "continuous"
+    },
+    {
+        "name": "V13",
+        "type": "continuous"
+    },
+    {
+        "name": "V14",
+        "type": "continuous"
+    },
+    {
+        "name": "V15",
+        "type": "continuous"
+    },
+    {
+        "name": "V16",
+        "type": "continuous"
+    },
+    {
+        "name": "V17",
+        "type": "continuous"
+    },
+    {
+        "name": "V18",
+        "type": "continuous"
+    },
+    {
+        "name": "V19",
+        "type": "continuous"
+    },
+    {
+        "name": "V20",
+        "type": "continuous"
+    },
+    {
+        "name": "V21",
+        "type": "continuous"
+    },
+    {
+        "name": "V22",
+        "type": "continuous"
+    },
+    {
+        "name": "V23",
+        "type": "continuous"
+    },
+    {
+        "name": "V24",
+        "type": "continuous"
+    },
+    {
+        "name": "V25",
+        "type": "continuous"
+    },
+    {
+        "name": "V26",
+        "type": "continuous"
+    },
+    {
+        "name": "V27",
+        "type": "continuous"
+    },
+    {
+        "name": "V28",
+        "type": "continuous"
+    },
+    {
+        "name": "Amount",
+        "type": "continuous"
+    }
+
+]
