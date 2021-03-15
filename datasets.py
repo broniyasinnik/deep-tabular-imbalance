@@ -1,5 +1,6 @@
 import os
 import torch
+from scipy.stats import rv_discrete, bernoulli
 import numpy as np
 import pandas as pd
 import json
@@ -8,7 +9,7 @@ from typing import List, Tuple, Dict, Any
 from copy import deepcopy
 from sklearn.datasets import make_moons, make_circles
 from torch.utils.data import Dataset
-from torch.utils.data import TensorDataset
+from torch.utils.data import TensorDataset, ConcatDataset
 
 
 class MoonsDataset:
@@ -26,51 +27,105 @@ class MoonsDataset:
         return self.y
 
 
-class DeprecatedDataset(Dataset):
-    def __init__(self, table_name, mode='train'):
-        # train, test, meta, cat_cols, ord_cols = load_dataset('adult', benchmark=True)
-        # fm = CatBoostFeatureMaker(meta, cat_cols, ord_cols, sample=train.shape[0])
-        # fm.fit(train)
-        # train_x_arr, train_y_arr = fm.transform(train)
-        # test_x_arr, test_y_arr = fm.transform(test)
-        # fm = FeatureMaker(meta, sample=train.shape[0])
-        # train_x_arr, train_y_arr = fm.make_features(train)
-        # test_x_arr, test_y_arr = fm.make_features(test)
-        # train_x, train_y = torch.from_numpy(train_x_arr.astype(np.float32)), torch.from_numpy(train_y_arr)
-        # test_x, test_y = torch.from_numpy(test_x_arr), torch.from_numpy(test_y_arr)
-        train_x = np.load('../SDGymBenchmarkData/dae/dae_adult.npy')
-        train_y = np.load('../SDGymBenchmarkData/dae/dae_label.npy')
-        test_x = train_x.copy()
-        test_y = train_y.copy()
-        train_x, train_y = torch.from_numpy(train_x), torch.from_numpy(train_y)
-        test_x, test_y = torch.from_numpy(test_x), torch.from_numpy(test_y)
-        self._train_dataset = TensorDataset(train_x, train_y)
-        self._test_dataset = TensorDataset(test_x, test_y)
-        self.mode = mode
+class CirclesDataSet(Dataset):
 
-    def features(self):
-        return self.data.tensors[0].type(torch.float32)
+    def __init__(self, train: bool = True,
+                 majority_samples: int = int(1e3), minority_samples: int = int(500),
+                 noise: int = 0.2, transform=None, target_transform=None):
+        self.train = train
+        self.majority_samples = majority_samples
+        self.minority_samples = minority_samples
+        self.noise = noise
+        self.transform = transform
+        self.target_transform = target_transform
+        if self.train:
+            X, y = self.make_two_circles(seed=42)
+            self.data = X
+            self.target = y
+        else:
+            X, y = self.make_two_circles(seed=137)
+            self.data = X
+            self.target = y
 
-    def labels(self):
-        return self.data.tensors[1]
+    def make_two_circles(self, seed):
+        np.random.seed(seed)
+        random.seed(seed)
+        X, y = make_circles(n_samples=2 * self.majority_samples,
+                            noise=self.noise)
+        X0, y0 = X[y == 0], y[y == 0][:, None]
+        X1 = np.random.multivariate_normal(mean=(0, 0), cov=((0.1, 0.08), (0.08, 0.1)),
+                                           size=self.minority_samples)
+        y1 = np.ones((self.minority_samples, 1))
+        X = np.concatenate([X0, X1])
+        y = np.concatenate([y0, y1])
+        return X, y
 
-    @property
-    def mode(self):
-        return self._mode
-
-    @mode.setter
-    def mode(self, new_mode: str):
-        assert new_mode in ['train', 'test', 'valid']
-        self._mode = new_mode
-        self.data = self._train_dataset
-        if self._mode == 'test':
-            self.data = self._test_dataset
+    def __len__(self):
+        return len(self.data)
 
     def __getitem__(self, item):
-        if self.mode == 'train':
-            return self._train_dataset[item]
-        elif self.mode == 'test':
-            return self._test_dataset[item]
+        point, label = self.data[item], self.target[item]
+        if self.transform is not None:
+            point = self.transform(point)
+        if self.target_transform is not None:
+            label = self.target_transform(label)
+
+        sample = {"features": point, "targets": label}
+        return sample
+
+
+class MixtureGaussiansDataset(Dataset):
+    MEANS = np.array(
+        [[-1, -4],
+         [2, 3],
+         [-3, 0],
+         ])
+    COVS = np.array(
+        [[[1, 0.8], [0.8, 1]],
+         [[1, -0.5], [-0.5, 1]],
+         [[1, 0], [0, 1]],
+         ])
+    PROBS = np.array([
+        0.2,
+        0.5,
+        0.3
+    ])
+    MEANS1 = np.array([
+        [0, 0],
+        # [-2, -2]
+    ])
+
+    COVS1 = np.array([
+        [[0.1, 0], [0, 0.4]],
+        # [[0.1, 0], [0, 0.1]]
+    ])
+
+    PROBS1 = np.array([
+        1,
+        # 0.5
+    ])
+
+    def __init__(self, majority=1000, minority=50):
+        super(MixtureGaussiansDataset, self).__init__()
+        data_majority = self.sample(majority, means=self.MEANS, covs=self.COVS, probs=self.PROBS)
+        data_minority = self.sample(minority, means=self.MEANS1, covs=self.COVS1, probs=PROBS1)
+        tensors_majority = TensorDataset(torch.tensor(data_majority), torch.zeros(majority, 1))
+        tensors_minority = TensorDataset(torch.tensor(data_minority), torch.ones(minority, 1))
+        dataset = ConcatDataset([tensors_majority, tensors_minority])
+        self.dataset = dataset
+
+    def sample(self, n, means, covs, probs):
+        assert len(means) == len(covs) == len(probs), "number of components mismatch"
+        components = len(means)
+        comps_dist = rv_discrete(values=(range(components), probs))
+        comps = comps_dist.rvs(size=n)
+        conds = np.arange(components)[:, None] == comps[None, :]
+        arr = np.array([np.random.multivariate_normal(means[c], covs[c], size=n)
+                        for c in range(components)])
+        return np.select(conds[:, :, None], arr).astype(np.float32)
+
+    def __getitem__(self, item):
+        return self.dataset[item]
 
 
 class UCIDataset(Dataset):
@@ -108,45 +163,6 @@ class UCIDataset(Dataset):
                 size, embed = col.get('size', 0), col.get('embed', 0)
                 self._embeds.append((size, embed))
                 self._categories_sizes.append(size)
-
-
-class CirclesDataSet(Dataset):
-
-    def make_dataset(self, seed):
-        np.random.seed(seed)
-        random.seed(seed)
-        X, y = make_circles(n_samples=self.n_samples, factor=self.factor, noise=self.noise)
-        return X, y
-
-    def __init__(self, train: bool = True, n_samples=int(1e3), factor: int = 0.7, noise: int = 0.05, transform=None,
-                 target_transform=None):
-        self.train = train
-        self.n_samples = n_samples
-        self.factor = factor
-        self.noise = noise
-        self.transform = transform
-        self.target_transform = target_transform
-        if self.train:
-            X, y = self.make_dataset(seed=42)
-            self.data = X
-            self.target = y
-        else:
-            X, y = self.make_dataset(seed=137)
-            self.data = X
-            self.target = y
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, item):
-        point, label = self.data[item], self.target[item]
-        if self.transform is not None:
-            point = self.transform(point)
-        if self.target_transform is not None:
-            label = self.target_transform(label)
-
-        sample = {"input": point, "label": label}
-        return sample
 
 
 class AdultDataSet(UCIDataset):

@@ -1,11 +1,27 @@
+import os
 from pathlib import Path
 import torch.nn as nn
+import shutil
 import typing as tp
 from models.networks import EmbeddingLayer, Generator, MLP
 from datasets import AdultDataSet, DatasetImbalanced
 from torch.utils.data import DataLoader
-from catalyst.dl import ConfigExperiment
 from models.transforms import ToTensor, ScalerTransform, Compose
+
+
+class logger:
+    def __init__(self, log: str, mode: str):
+        self.log = log
+        self.mode = mode
+
+    def __enter__(self):
+        if self.mode == "debug":
+            if os.path.exists(self.log):
+                shutil.rmtree(self.log)
+        return self.log
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
 
 
 def get_loaders(stage: str = None):

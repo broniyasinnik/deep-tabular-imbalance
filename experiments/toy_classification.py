@@ -1,88 +1,61 @@
-import numpy as np
 import torch
 import torch.nn as nn
-from scipy.stats import rv_discrete, bernoulli
-from torch.utils.data import TensorDataset, ConcatDataset
+from catalyst import dl
+from models.net import Net
+from models.transforms import ToTensor
+from callabacks import DecisionBoundaryCallback
+from runners import ClassificationRunner
+from torch.utils.data import TensorDataset, DataLoader
+from sklearn.datasets import make_classification
+from experiment_utils import logger
+from datasets import CirclesDataSet
+from visualization_utils import visualize_dataset
 import matplotlib.pyplot as plt
 
-np.random.seed(42)
-lims = (-5, 5)
+# dataset = CirclesDataSet(noise=0.3, minority_samples=50, transform=ToTensor(), target_transform=ToTensor())
+# fig = visualize_dataset(dataset)
+# fig.show()
 
-MEANS = np.array(
-    [[-1, -4],
-     [2, 3],
-     [-3, 0],
-     ])
+x, y = make_classification(n_samples=10000,  # number of samples
+                           n_features=2,  # feature/label count
+                           n_informative=2,  # informative features
+                           n_redundant=0,  # redundant features
+                           n_repeated=0,  # duplicate features
+                           class_sep=1.3,
+                           n_clusters_per_class=1,  # number of clusters per class; clusters during plotting
+                           weights=[0.99],  # proportions of samples assigned to each class
+                           flip_y=0,  # fraction of samples whose class is assigned randomly.
+                           random_state=21,
+                           )
+dataset = TensorDataset(torch.tensor(x, dtype=torch.float32),
+                        torch.tensor(y, dtype=torch.float32))
 
-COVS = np.array(
-    [[[1, 0.8], [0.8, 1]],
-     [[1, -0.5], [-0.5, 1]],
-     [[1, 0], [0, 1]],
-     ])
-PROBS = np.array([
-    0.2,
-    0.5,
-    0.3
-])
+model = Net(n_samples=50)
+criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(20.))
+optimizer = {
+    'classifier': torch.optim.Adam(model.classifier.parameters(), lr=0.02),
+    'z': torch.optim.Adam([model.z], lr=0.01)
+}
 
-MEANS1 = np.array([
-    [0, 0],
-    # [-2, -2]
-])
+loaders = {
+    "train": DataLoader(dataset, batch_size=64, shuffle=True),
+    "valid": DataLoader(dataset, batch_size=64, shuffle=False)
+}
 
-COVS1 = np.array([
-    [[0.1, 0], [0, 0.4]],
-    # [[0.1, 0], [0, 0.1]]
-])
-
-PROBS1 = np.array([
-    1,
-    # 0.5
-])
-
-
-def sample(n, means, covs, probs):
-    assert len(means) == len(covs) == len(probs), "number of components mismatch"
-    components = len(means)
-    comps_dist = rv_discrete(values=(range(components), probs))
-    comps = comps_dist.rvs(size=n)
-    conds = np.arange(components)[:, None] == comps[None, :]
-    arr = np.array([np.random.multivariate_normal(means[c], covs[c], size=n)
-                    for c in range(components)])
-    return np.select(conds[:, :, None], arr).astype(np.float32)
-
-
-def vis_histo_data(data):
-    """
-        Visualizes data as histogram
-    """
-    hist = np.histogram2d(data[:, 1], data[:, 0], bins=100, range=[lims, lims])
-    plt.pcolormesh(hist[1], hist[2], hist[0], alpha=0.5)
-
-
-def vis_data(majority, minority):
-    plt.scatter(majority[:, 0], majority[:, 1], c='b')
-    plt.scatter(minority[:, 0], minority[:, 1], c='r', alpha=0.5)
-    plt.show()
-
-
-def get_dataset(majority=1000, minority=20):
-    data_majority = sample(majority, means=MEANS, covs=COVS, probs=PROBS)
-    data_minority = sample(minority, means=MEANS1, covs=COVS1, probs=PROBS1)
-    tensors_majority = TensorDataset(torch.tensor(data_majority), torch.zeros(majority, 1))
-    tensors_minority = TensorDataset(torch.tensor(data_minority), torch.ones(minority, 1))
-    dataset = ConcatDataset([tensors_majority, tensors_minority])
-    return dataset
-
-
-def get_classifier():
-    classifier = nn.Sequential(nn.Linear(2, 64),
-                               nn.ReLU(),
-                               nn.Linear(64, 128),
-                               nn.ReLU(),
-                               nn.Linear(128, 2))
-    return classifier
-
-
-
-
+runner = ClassificationRunner()
+with logger('./logs', mode='debug') as log:
+    runner.train(model=model,
+                 criterion=criterion,
+                 optimizer=optimizer,
+                 loaders=loaders,
+                 logdir=log,
+                 num_epochs=10,
+                 callbacks={
+                     "criterion": dl.CriterionCallback(
+                         metric_key="loss",
+                         input_key="logits",
+                         target_key="targets"),
+                     "optimizer_z": dl.OptimizerCallback(metric_key="loss", optimizer_key='z'),
+                     "visualization": DecisionBoundaryCallback()
+                 },
+                 )

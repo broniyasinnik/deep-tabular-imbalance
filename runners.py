@@ -1,14 +1,43 @@
 import torch
 import catalyst.dl as dl
+import numpy as np
+from torch.autograd import grad
 from pathlib import Path
-from torch.utils.tensorboard import SummaryWriter
 import torch.nn.functional as F
 from typing import Mapping, Any
+from torch.utils.tensorboard import SummaryWriter
 
 
-class ClassificationRunner(dl.SupervisedRunner):
+class ClassificationRunner(dl.Runner):
+
+    def log_figure(self, tag: str, figure: np.ndarray):
+        writer = self.loggers['_tensorboard'].loggers[self.stage_key]
+        writer.add_figure(tag, figure, global_step=self.global_epoch_step)
+
+    def handle_batch(self, batch):
+        x, y = batch
+        # y_hat = self.model(x)
+        if self.loader_key == "train":
+            pz = self.model(self.model.z)
+            yz = torch.ones_like(pz)
+            loss_z = self.get_criterion(self.stage_key)(pz, yz)
+            gradients = grad(loss_z, self.model.parameters(), create_graph=True)
+            y_hat = self.model(x, z_gradients=gradients)
+            self.model.gradient_step(gradients)
+        else:
+            y_hat = self.model(x)
+
+        self.batch = {
+            "features": x,
+            "targets": y.view(-1, 1),
+            "logits": y_hat,
+            "scores": torch.sigmoid(y_hat.view(-1)),
+        }
+
+
+class OldClassificationRunner(dl.SupervisedRunner):
     def __init__(self, use_hyper_network=False, use_gan_to_balance=False, **kwargs):
-        super(ClassificationRunner, self).__init__(**kwargs)
+        super(OldClassificationRunner, self).__init__(**kwargs)
         self.use_gan_to_balance = use_gan_to_balance
         self.use_hyper_network = use_hyper_network
 
@@ -20,6 +49,10 @@ class ClassificationRunner(dl.SupervisedRunner):
             output = torch.where(output > 0.5, torch.ones_like(output), torch.zeros_like(output))
             return output
 
+    def log_figure(self, tag: str, figure: np.ndarray):
+        with SummaryWriter(Path(self.logdir) / tag) as w:
+            w.add_figure(tag, figure, global_step=self.epoch)
+
     def log_prediction_from_logits(self):
         with torch.no_grad():
             logits = self.output["logits"]
@@ -27,28 +60,19 @@ class ClassificationRunner(dl.SupervisedRunner):
             preds = torch.where(preds > 0.5, torch.ones_like(preds), torch.zeros_like(preds))
             self.output.update({"preds": preds})
 
+    def _handle_classification_via_hyper_network(self, input_data):
+        hypernet = self.model["hypernetwork"]
+        x_syn, y_syn = hypernet.x_syn, hypernet.y_syn
+        # Calculate regularization
+        hypernet.hyper_forward(input_data)
+        regularization = hypernet.weight_regularization_loss()
+        # Calculate loss
+        hypernet.hyper_forward(x_syn)
+        logits_syn = hypernet(x_syn)
+        loss_h = F.binary_cross_entropy_with_logits(logits_syn, y_syn) + regularization
+        self.batch_metrics.update({'loss_h': loss_h})
 
-    def _hadle_classification_via_hyper_network(self, input_data, input_labels):
-        if self.loader_key == "train":
-            with torch.no_grad():
-                # self.model["hypernet"].update_weights()
-                encoded_input = self.model["encoder"](input_data)
-                minority = input_labels[input_labels == 1.]
-                encoded_minority = encoded_input[torch.nonzero(input_labels, as_tuple=True)[0]]
-                if encoded_minority.shape[0] == 1:
-                    encoded_minority = encoded_minority.expand(2,-1)
-                    minority = minority.expand(2)
-                logits = self.model['hypernet'].net(encoded_minority)
-                if logits.numel():
-                    loss = F.binary_cross_entropy_with_logits(logits, minority.view_as(logits))
-                    loss = loss.view((1, 1))
-                else:
-                    loss = torch.zeros((1,1))
-
-            logits = self.model["hypernet"](encoded_input, loss)
-        else:
-            encoded_input = self.model["encoder"](input_data)
-            logits = self.model["hypernet"].net(encoded_input)
+        logits = hypernet(input_data)
         return logits
 
     def _handle_classification_via_gan(self, input_data, input_labels):
@@ -74,15 +98,15 @@ class ClassificationRunner(dl.SupervisedRunner):
         if self.use_gan_to_balance:
             logits, targets = self._handle_classification_via_gan(input_data, input_labels)
         elif self.use_hyper_network:
-            logits = self._hadle_classification_via_hyper_network(input_data, input_labels)
+            logits = self._handle_classification_via_hyper_network(input_data)
             targets = input_labels
         else:
             encoded_data = self.model["encoder"](input_data)
             targets = input_labels
             logits = self.model["classifier"](encoded_data)
 
-        self.output = {"full_logits": logits, "logits": logits[:batch_size]}
-        self.input = {"full_targets": targets, "targets": targets[:batch_size]}
+        self.output = {"logits": logits}
+        self.input = {"targets": targets}
         self.log_prediction_from_logits()
 
 
@@ -187,8 +211,8 @@ class CGANRunner(dl.Runner):
         disc_interpolates = self.model["discriminator"](interpolates)
 
         gradients = torch.autograd.grad(outputs=disc_interpolates, inputs=interpolates,
-                                  grad_outputs=torch.ones(disc_interpolates.size()),
-                                  create_graph=True, retain_graph=True, only_inputs=True)[0]
+                                        grad_outputs=torch.ones(disc_interpolates.size()),
+                                        create_graph=True, retain_graph=True, only_inputs=True)[0]
 
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * 10
         return gradient_penalty
@@ -227,9 +251,9 @@ class CGANRunner(dl.Runner):
             encoded_input = torch.cat([encoded_input,
                                        input_labels], dim=-1)  # In Conditional GAN we include the label
         scores_real = self.model["discriminator"](encoded_input)
-        
+
         if self.wassernstain:
-            batch_metrics["loss_discriminator"] = scores_fake.mean()-scores_real.mean()
+            batch_metrics["loss_discriminator"] = scores_fake.mean() - scores_real.mean()
             batch_metrics["loss_gp"] = self.calc_gradient_penalty(encoded_input, generated_input)
         else:
             loss_discriminator = F.binary_cross_entropy_with_logits(scores_real, torch.zeros_like(scores_real))
@@ -241,7 +265,8 @@ class CGANRunner(dl.Runner):
         # Train the generator
         if self.loader_batch_step % self.critic_steps == 0:
             self.model["generator"].zero_grad()
-            random_latent_vectors, generated_labels = self.model["generator"].sample_latent_vectors(batch_size, input_labels)
+            random_latent_vectors, generated_labels = self.model["generator"].sample_latent_vectors(batch_size,
+                                                                                                    input_labels)
             generated_vectors = self.model["generator"](random_latent_vectors)
             generated_vectors = torch.cat([generated_vectors,
                                            generated_labels], dim=-1)  # In Conditional GAN we include the label
@@ -259,7 +284,6 @@ class CGANRunner(dl.Runner):
         input_data, input_labels = batch["input"].to(self.device), batch["label"].to(self.device).view(-1, 1)
         self.input["targets"] = input_labels
         self._handle_train_batch(input_data, input_labels)
-
 
 # class GANRunner(dl.Runner):
 #     def __init__(self, *, include_classifier=True, **kwargs):

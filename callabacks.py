@@ -1,7 +1,11 @@
 import torch
+from torch.utils.data import TensorDataset
 from torch.utils.tensorboard import SummaryWriter
 from catalyst.core import Callback, CallbackOrder
 from sklearn.metrics import balanced_accuracy_score
+from visualization_utils import visualize_decision_boundary, visualize_dataset
+import numpy as np
+
 
 class BalancedAccuracyCallback(Callback):
     def __init__(self):
@@ -11,7 +15,6 @@ class BalancedAccuracyCallback(Callback):
         y_true = runner.input["targets"].to("cpu").numpy()
         y_pred = runner.output["preds"].to("cpu").numpy()
         runner.batch_metrics["balanced_accuracy_score"] = balanced_accuracy_score(y_true, y_pred)
-
 
 
 class LogPRCurve(Callback):
@@ -37,6 +40,36 @@ class LogPRCurve(Callback):
             tensorboard_labels = torch.cat(self.tensorboard_labels).squeeze()
             self.writer.add_pr_curve("precision_recall", tensorboard_labels, tensorboard_probs)
 
+
+class DecisionBoundaryCallback(Callback):
+    def __init__(self):
+        super().__init__(order=CallbackOrder.External)
+
+    def on_epoch_end(self, runner):
+        loader = runner.loaders["valid"].dataset
+        if type(loader) is TensorDataset:
+            X = loader.tensors[0]
+            y = loader.tensors[1]
+        else:
+            X = loader.dataset.data
+            y = loader.dataset.target
+        image_boundry = visualize_decision_boundary(X, y, runner.model)
+        runner.log_figure(tag="decision_boundary", figure=image_boundry)
+
+
+class HypernetVisualization(Callback):
+    def __init__(self):
+        super().__init__(order=CallbackOrder.External)
+
+    def on_epoch_end(self, runner):
+        X_data = runner.loaders["train"].dataset.data
+        y_data = runner.loaders["train"].dataset.target
+        X_syn = runner.model["hypernetwork"].x_syn.detach().numpy()
+        y_syn = runner.model["hypernetwork"].y_syn.squeeze()
+        X = np.concatenate([X_data, X_syn])
+        y = np.concatenate([y_data, y_syn])
+        image_dataset = visualize_dataset(X, y)
+        runner.log_figure(tag="syntetic", figure=image_dataset)
 
 class LogGANProjection(Callback):
     def __init__(self, log_dir: str, tag: str, samples: int = 200):
@@ -67,4 +100,3 @@ class LogGANProjection(Callback):
         embeddings = torch.cat(embeddings)
         self.writer.add_embedding(embeddings, metadata=metadata,
                                   global_step=runner.epoch, tag=self.tag)
-
