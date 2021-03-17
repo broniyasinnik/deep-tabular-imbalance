@@ -1,9 +1,12 @@
 import torch
+from IPython import display
 from torch.utils.data import TensorDataset
 from torch.utils.tensorboard import SummaryWriter
 from catalyst.core import Callback, CallbackOrder
 from sklearn.metrics import balanced_accuracy_score
 from visualization_utils import visualize_decision_boundary, visualize_dataset
+import matplotlib.pyplot as plt
+import time
 import numpy as np
 
 
@@ -42,18 +45,22 @@ class LogPRCurve(Callback):
 
 
 class DecisionBoundaryCallback(Callback):
-    def __init__(self):
+    def __init__(self, plot_synthetic=False):
         super().__init__(order=CallbackOrder.External)
+        self.plot_synthetic = plot_synthetic
+
 
     def on_epoch_end(self, runner):
-        loader = runner.loaders["valid"].dataset
-        if type(loader) is TensorDataset:
-            X = loader.tensors[0]
-            y = loader.tensors[1]
+        loader = runner.loaders["valid"]
+        if type(loader.dataset) is TensorDataset:
+            X = loader.datset.tensors[0]
+            y = loader.dataset.tensors[1]
         else:
             X = loader.dataset.data
             y = loader.dataset.target
-        image_boundry = visualize_decision_boundary(X, y, runner.model)
+        image_boundry = visualize_decision_boundary(X, y, runner.model, self.plot_synthetic)
+        display.clear_output(wait=True)
+        plt.show()
         runner.log_figure(tag="decision_boundary", figure=image_boundry)
 
 

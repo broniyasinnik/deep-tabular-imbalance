@@ -1,12 +1,15 @@
 import os
-from pathlib import Path
+import torch
 import torch.nn as nn
 import shutil
 import typing as tp
+from torch.utils.data import TensorDataset
+from pathlib import Path
 from models.networks import EmbeddingLayer, Generator, MLP
 from datasets import AdultDataSet, DatasetImbalanced
 from torch.utils.data import DataLoader
 from models.transforms import ToTensor, ScalerTransform, Compose
+from sklearn.datasets import make_classification
 
 
 class logger:
@@ -22,6 +25,24 @@ class logger:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
+
+
+def get_classification_dataset():
+    x, y = make_classification(n_samples=10000,  # number of samples
+                               n_features=2,  # feature/label count
+                               n_informative=2,  # informative features
+                               n_redundant=0,  # redundant features
+                               n_repeated=0,  # duplicate features
+                               class_sep=1.3,
+                               n_clusters_per_class=1,  # number of clusters per class; clusters during plotting
+                               weights=[0.99],  # proportions of samples assigned to each class
+                               flip_y=0,  # fraction of samples whose class is assigned randomly.
+                               random_state=21,
+                               )
+    dataset = TensorDataset(torch.tensor(x, dtype=torch.float32),
+                            torch.tensor(y, dtype=torch.float32))
+
+    return dataset
 
 
 def get_loaders(stage: str = None):

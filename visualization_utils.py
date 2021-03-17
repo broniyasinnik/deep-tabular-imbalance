@@ -3,7 +3,7 @@ import cv2
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-
+from IPython import display
 
 def visualize_dataset(dataset):
     X = np.array([dataset[i]["features"].tolist() for i in range(len(dataset))])
@@ -42,7 +42,7 @@ def vis_histo_data(data):
     plt.pcolormesh(hist[1], hist[2], hist[0], alpha=0.5)
 
 
-def visualize_decision_boundary(X, y, model):
+def visualize_decision_boundary(X, y, model, plot_synthetic):
     h = 0.25
     x_min, x_max = X[:, 0].min() - 1, X[:, 0].max() + 1
     y_min, y_max = X[:, 1].min() - 1, X[:, 1].max() + 1
@@ -54,12 +54,15 @@ def visualize_decision_boundary(X, y, model):
     scores = torch.sigmoid(model(inputs))
     Z = np.array([s.data > 0.5 for s in scores])
     Z = Z.reshape(xx.shape)
-    Syn = model.z.detach().numpy()
+    Syn = None
+    if plot_synthetic:
+        Syn = model.z.detach().numpy()
 
     fig = plt.figure(figsize=(10, 10))
-    plt.contourf(xx, yy, Z, cmap=plt.cm.Spectral, alpha=0.8)
+    plt.contourf(xx, yy, Z, cmap=plt.cm.bone, alpha=0.8)
     plt.scatter(X[:, 0], X[:, 1], c=y, s=40, cmap=plt.cm.Spectral)
-    plt.scatter(Syn[:, 0], Syn[:, 1], c='g', s=40)
+    if Syn is not None:
+        plt.scatter(Syn[:, 0], Syn[:, 1], c='g', s=40)
     plt.xlim(xx.min(), xx.max())
     plt.ylim(yy.min(), yy.max())
     return fig

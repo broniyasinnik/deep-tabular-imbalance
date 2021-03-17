@@ -53,7 +53,7 @@ class CirclesDataSet(Dataset):
         X, y = make_circles(n_samples=2 * self.majority_samples,
                             noise=self.noise)
         X0, y0 = X[y == 0], y[y == 0][:, None]
-        X1 = np.random.multivariate_normal(mean=(0, 0), cov=((0.1, 0.08), (0.08, 0.1)),
+        X1 = np.random.multivariate_normal(mean=(0, 0), cov=((0.05, 0), (0, 0.05)),
                                            size=self.minority_samples)
         y1 = np.ones((self.minority_samples, 1))
         X = np.concatenate([X0, X1])

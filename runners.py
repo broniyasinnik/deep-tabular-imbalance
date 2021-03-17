@@ -5,7 +5,9 @@ from torch.autograd import grad
 from pathlib import Path
 import torch.nn.functional as F
 from typing import Mapping, Any
+import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
+from IPython import display
 
 
 class ClassificationRunner(dl.Runner):
@@ -15,15 +17,22 @@ class ClassificationRunner(dl.Runner):
         writer.add_figure(tag, figure, global_step=self.global_epoch_step)
 
     def handle_batch(self, batch):
-        x, y = batch
-        # y_hat = self.model(x)
-        if self.loader_key == "train":
+        x, y = batch['features'], batch['targets']
+        if self.model.z is not None and self.loader_key == "train":
+            optimizers = self.get_optimizer("train", '')
+            optimizer_z = optimizers['z']
+            optimizer_model = optimizers['model']
+            optimizer_z.zero_grad()
+            optimizer_model.zero_grad()
             pz = self.model(self.model.z)
             yz = torch.ones_like(pz)
             loss_z = self.get_criterion(self.stage_key)(pz, yz)
             gradients = grad(loss_z, self.model.parameters(), create_graph=True)
             y_hat = self.model(x, z_gradients=gradients)
-            self.model.gradient_step(gradients)
+            loss_x = self.get_criterion(self.stage_key)(y_hat, y)
+            loss_x.backward()
+            optimizer_z.step()
+            optimizer_model.step()
         else:
             y_hat = self.model(x)
 
