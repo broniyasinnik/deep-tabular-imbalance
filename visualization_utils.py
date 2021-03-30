@@ -51,6 +51,7 @@ def visualize_decision_boundary(X, y, model, plot_synthetic):
     Xmesh = np.c_[xx.ravel(), yy.ravel()]
 
     inputs = torch.tensor([list(xrow) for xrow in Xmesh]).float()
+    model.eval()
     scores = torch.sigmoid(model(inputs))
     Z = np.array([s.data > 0.5 for s in scores])
     Z = Z.reshape(xx.shape)

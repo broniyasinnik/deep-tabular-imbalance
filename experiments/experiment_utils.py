@@ -14,7 +14,7 @@ from sklearn.datasets import make_classification
 
 class logger:
     def __init__(self, log: str, mode: str):
-        self.log = log
+        self.log = Path(log)
         self.mode = mode
 
     def __enter__(self):

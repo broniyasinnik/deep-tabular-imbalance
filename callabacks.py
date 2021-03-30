@@ -14,9 +14,11 @@ class BalancedAccuracyCallback(Callback):
     def __init__(self):
         super().__init__(CallbackOrder.Metric)
 
+    @torch.no_grad()
     def on_batch_end(self, runner: "IRunner") -> None:
-        y_true = runner.input["targets"].to("cpu").numpy()
-        y_pred = runner.output["preds"].to("cpu").numpy()
+        y_true = runner.batch["targets"].to("cpu").numpy()
+        scores = runner.batch["scores"].to("cpu").numpy()
+        y_pred = np.where(scores>=0.5, 1, 0)
         runner.batch_metrics["balanced_accuracy_score"] = balanced_accuracy_score(y_true, y_pred)
 
 
@@ -31,17 +33,18 @@ class LogPRCurve(Callback):
         self.tensorboard_probs = []
         self.tensorboard_labels = []
 
+
     def on_batch_end(self, runner):
-        targets = runner.input["targets"]
-        probs = torch.sigmoid(runner.output["logits"])
+        targets = runner.batch["targets"]
+        probs = runner.batch["scores"]
         self.tensorboard_probs.append(probs)
         self.tensorboard_labels.append(targets)
 
-    def on_stage_end(self, runner):
-        if runner.is_infer_stage:
-            tensorboard_probs = torch.cat(self.tensorboard_probs).squeeze()
-            tensorboard_labels = torch.cat(self.tensorboard_labels).squeeze()
-            self.writer.add_pr_curve("precision_recall", tensorboard_labels, tensorboard_probs)
+    def on_loader_end(self, runner):
+        tensorboard_probs = torch.cat(self.tensorboard_probs).squeeze()
+        tensorboard_labels = torch.cat(self.tensorboard_labels).squeeze()
+        self.writer.add_pr_curve("precision_recall", tensorboard_labels, tensorboard_probs,
+                                 global_step=runner.stage_epoch_step)
 
 
 class DecisionBoundaryCallback(Callback):
@@ -49,9 +52,9 @@ class DecisionBoundaryCallback(Callback):
         super().__init__(order=CallbackOrder.External)
         self.plot_synthetic = plot_synthetic
 
-
-    def on_epoch_end(self, runner):
-        loader = runner.loaders["valid"]
+    def on_loader_end(self, runner):
+        loader = runner.loader
+        # loader = runner.loaders["train"]
         if type(loader.dataset) is TensorDataset:
             X = loader.datset.tensors[0]
             y = loader.dataset.tensors[1]
@@ -61,7 +64,7 @@ class DecisionBoundaryCallback(Callback):
         image_boundry = visualize_decision_boundary(X, y, runner.model, self.plot_synthetic)
         display.clear_output(wait=True)
         plt.show()
-        runner.log_figure(tag="decision_boundary", figure=image_boundry)
+        runner.log_figure(tag=f"decision_boundary_{runner.loader_key}", figure=image_boundry)
 
 
 class HypernetVisualization(Callback):

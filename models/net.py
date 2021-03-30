@@ -12,6 +12,7 @@ class Net(nn.Module):
                                         nn.Linear(32, 32), nn.ReLU(),
                                         nn.Linear(32, 1))
         self.lr = lr
+        self.z = None
 
     def produce_samples(self, n_samples, minority):
         self.n_samples = n_samples
@@ -21,7 +22,7 @@ class Net(nn.Module):
         self.z = z
 
     def gradient_step(self, gradients):
-        self.classifier[0].weight.data = self.classifier[0].weight.data - self.lr* gradients[0]
+        self.classifier[0].weight.data = self.classifier[0].weight.data - self.lr * gradients[0]
         self.classifier[0].bias.data = self.classifier[0].bias.data - self.lr * gradients[1]
         self.classifier[2].weight.data = self.classifier[2].weight.data - self.lr * gradients[2]
         self.classifier[2].bias.data = self.classifier[2].bias.data - self.lr * gradients[3]

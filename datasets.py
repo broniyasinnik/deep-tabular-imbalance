@@ -53,11 +53,12 @@ class CirclesDataSet(Dataset):
         X, y = make_circles(n_samples=2 * self.majority_samples,
                             noise=self.noise)
         X0, y0 = X[y == 0], y[y == 0][:, None]
-        X1 = np.random.multivariate_normal(mean=(0, 0), cov=((0.05, 0), (0, 0.05)),
-                                           size=self.minority_samples)
-        y1 = np.ones((self.minority_samples, 1))
-        X = np.concatenate([X0, X1])
-        y = np.concatenate([y0, y1])
+        X1, y1 = X[y==1][:self.minority_samples], y[y==1][:, None][:self.minority_samples]
+        X0_in = np.random.multivariate_normal(mean=(0, 0), cov=((0.05, 0), (0, 0.05)),
+                                           size=self.majority_samples)
+        y0_in = np.zeros((self.majority_samples, 1))
+        X = np.concatenate([X0, X1, X0_in])
+        y = np.concatenate([y0, y1, y0_in])
         return X, y
 
     def __len__(self):

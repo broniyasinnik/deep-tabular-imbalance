@@ -11,9 +11,13 @@ from IPython import display
 
 
 class ClassificationRunner(dl.Runner):
+    def __init__(self):
+        super(ClassificationRunner, self).__init__()
 
     def log_figure(self, tag: str, figure: np.ndarray):
-        writer = self.loggers['_tensorboard'].loggers[self.stage_key]
+        tb_loggers = self.loggers['_tensorboard']
+        tb_loggers._check_loader_key(loader_key=self.loader_key)
+        writer = tb_loggers.loggers[self.loader_key]
         writer.add_figure(tag, figure, global_step=self.global_epoch_step)
 
     def handle_batch(self, batch):
@@ -26,10 +30,12 @@ class ClassificationRunner(dl.Runner):
             optimizer_model.zero_grad()
             pz = self.model(self.model.z)
             yz = torch.ones_like(pz)
-            loss_z = self.get_criterion(self.stage_key)(pz, yz)
+            loss_z = self.get_criterion(self.stage_key)['bce'](pz, yz)
             gradients = grad(loss_z, self.model.parameters(), create_graph=True)
             y_hat = self.model(x, z_gradients=gradients)
-            loss_x = self.get_criterion(self.stage_key)(y_hat, y)
+
+            loss_x = self.get_criterion(self.stage_key)['bce'](y_hat, y)
+            # loss_x += 100000*self.get_criterion(self.stage_key)['mse'](torch.sigmoid(pz), 0.5*torch.ones_like(pz))
             loss_x.backward()
             optimizer_z.step()
             optimizer_model.step()
