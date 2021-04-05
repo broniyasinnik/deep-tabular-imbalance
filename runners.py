@@ -2,17 +2,17 @@ import torch
 import catalyst.dl as dl
 import numpy as np
 from torch.autograd import grad
+from catalyst import metrics
 from pathlib import Path
 import torch.nn.functional as F
 from typing import Mapping, Any
-import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
-from IPython import display
 
 
 class ClassificationRunner(dl.Runner):
-    def __init__(self):
+    def __init__(self, train_on_synthetic=False):
         super(ClassificationRunner, self).__init__()
+        self.train_on_synthetic = train_on_synthetic
 
     def log_figure(self, tag: str, figure: np.ndarray):
         tb_loggers = self.loggers['_tensorboard']
@@ -20,27 +20,77 @@ class ClassificationRunner(dl.Runner):
         writer = tb_loggers.loggers[self.loader_key]
         writer.add_figure(tag, figure, global_step=self.global_epoch_step)
 
+    def on_loader_start(self, runner):
+        super().on_loader_start(runner)
+        if self.train_on_synthetic and self.loader_key == "train":
+            self.meters = {
+                key: metrics.AdditiveValueMetric(compute_on_call=False)
+                for key in ["loss_x", "loss_z"]
+            }
+        else:
+            self.meters = {
+                key: metrics.AdditiveValueMetric(compute_on_call=False)
+                for key in ["loss_x"]
+            }
+
+    def on_loader_end(self, runner):
+        for key in self.meters:
+            self.loader_metrics[key] = self.meters[key].compute()[0]
+        super().on_loader_end(runner)
+
     def handle_batch(self, batch):
         x, y = batch['features'], batch['targets']
-        if self.model.z is not None and self.loader_key == "train":
-            optimizers = self.get_optimizer("train", '')
-            optimizer_z = optimizers['z']
-            optimizer_model = optimizers['model']
-            optimizer_z.zero_grad()
-            optimizer_model.zero_grad()
-            pz = self.model(self.model.z)
-            yz = torch.ones_like(pz)
-            loss_z = self.get_criterion(self.stage_key)['bce'](pz, yz)
-            gradients = grad(loss_z, self.model.parameters(), create_graph=True)
-            y_hat = self.model(x, z_gradients=gradients)
+        optimizers = self.get_optimizer("train", '')
+        optimizer_model = optimizers['model']
+        if self.is_train_loader:
+            if self.train_on_synthetic:
+                z = torch.tensor(self.loader.dataset.synthetic_data, dtype=torch.float32, requires_grad=True)
+                yz = torch.tensor(self.loader.dataset.synthetic_target)
 
-            loss_x = self.get_criterion(self.stage_key)['bce'](y_hat, y)
-            # loss_x += 100000*self.get_criterion(self.stage_key)['mse'](torch.sigmoid(pz), 0.5*torch.ones_like(pz))
-            loss_x.backward()
-            optimizer_z.step()
-            optimizer_model.step()
-        else:
+                # Create optimizer for synthetic points
+                optimizer_z = torch.optim.SGD([z], lr=self.hparams["lr_z"])
+                optimizer_z.zero_grad()
+                optimizer_model.zero_grad()
+
+                # Calculate the gradient of the loss on the synthetic points
+                pz = self.model(z)
+                loss_z = F.binary_cross_entropy_with_logits(pz, yz)
+                gradients = grad(loss_z, self.model.parameters(), create_graph=True)
+                y_hat = self.model(x, lr=self.hparams["lr_meta"], z_gradients=gradients)
+                loss_x = self.get_criterion(self.stage_key)['bce'](y_hat, y)
+
+                # log metrics
+                self.batch_metrics.update({
+                    "loss_x": loss_x,
+                    "loss_z": loss_z
+                })
+
+                # Update model and z
+                loss = loss_x #+loss_z
+                loss.backward()
+                optimizer_z.step()
+                optimizer_model.step()
+                self.loader.dataset.synthetic_data = z.detach().numpy()
+            else:
+                y_hat = self.model(x)
+                loss_x = self.get_criterion(self.stage_key)['bce'](y_hat, y)
+                self.batch_metrics.update({
+                    "loss_x": loss_x
+                })
+                loss_x.backward()
+                optimizer_model.step()
+                optimizer_model.zero_grad()
+
+        elif self.is_valid_loader:
             y_hat = self.model(x)
+            loss_x = self.get_criterion(self.stage_key)['bce'](y_hat, y)
+            self.batch_metrics.update({
+                "loss_x": loss_x
+            })
+
+        for key in self.meters:
+            self.meters[key].update(self.batch_metrics[key].item(), self.batch_size)
+
 
         self.batch = {
             "features": x,

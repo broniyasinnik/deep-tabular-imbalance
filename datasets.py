@@ -1,12 +1,13 @@
 import os
 import torch
-from scipy.stats import rv_discrete, bernoulli
+from scipy.stats import rv_discrete
 import numpy as np
 import pandas as pd
 import json
 import random
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple
 from copy import deepcopy
+from data_utils import sample_noisy_data
 from sklearn.datasets import make_moons, make_circles
 from torch.utils.data import Dataset
 from torch.utils.data import TensorDataset, ConcatDataset
@@ -31,10 +32,13 @@ class CirclesDataSet(Dataset):
 
     def __init__(self, train: bool = True,
                  majority_samples: int = int(1e3), minority_samples: int = int(500),
+                 noisy_minority_samples: int = 0, noisy_majority_samples: int= 0,
                  noise: int = 0.2, transform=None, target_transform=None):
         self.train = train
-        self.majority_samples = majority_samples
+        self.majority_samples = majority_samples // 2
         self.minority_samples = minority_samples
+        self.noisy_minority_samples = noisy_minority_samples
+        self.noisy_majority_samples = noisy_majority_samples
         self.noise = noise
         self.transform = transform
         self.target_transform = target_transform
@@ -42,6 +46,24 @@ class CirclesDataSet(Dataset):
             X, y = self.make_two_circles(seed=42)
             self.data = X
             self.target = y
+            self.synthetic_data = None
+            self.sythetic_target = None
+            if self.noisy_minority_samples > 0:
+                noisy_minority = sample_noisy_data(self.noisy_minority_samples,
+                                                   data=self.data[(self.target == 1).squeeze()])
+                self.synthetic_data = noisy_minority
+                self.synthetic_target = np.ones((self.noisy_minority_samples, 1))
+            if self.noisy_majority_samples > 0:
+                noisy_majority = sample_noisy_data(self.noisy_majority_samples,
+                                                   data=self.data[(self.target == 0).squeeze()])
+
+                if self.synthetic_data is None:
+                    self.synthetic_data = noisy_majority
+                    self.synthetic_target = np.zeros((self.noisy_majority_samples, 1))
+                else:
+                    self.synthetic_data = np.concatenate([self.synthetic_data, noisy_majority])
+                    self.synthetic_target = np.concatenate([self.synthetic_target,
+                                                       np.zeros((self.noisy_majority_samples, 1))])
         else:
             X, y = self.make_two_circles(seed=137)
             self.data = X
@@ -53,9 +75,9 @@ class CirclesDataSet(Dataset):
         X, y = make_circles(n_samples=2 * self.majority_samples,
                             noise=self.noise)
         X0, y0 = X[y == 0], y[y == 0][:, None]
-        X1, y1 = X[y==1][:self.minority_samples], y[y==1][:, None][:self.minority_samples]
+        X1, y1 = X[y == 1][:self.minority_samples], y[y == 1][:, None][:self.minority_samples]
         X0_in = np.random.multivariate_normal(mean=(0, 0), cov=((0.05, 0), (0, 0.05)),
-                                           size=self.majority_samples)
+                                              size=self.majority_samples)
         y0_in = np.zeros((self.majority_samples, 1))
         X = np.concatenate([X0, X1, X0_in])
         y = np.concatenate([y0, y1, y0_in])

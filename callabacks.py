@@ -48,24 +48,17 @@ class LogPRCurve(Callback):
 
 
 class DecisionBoundaryCallback(Callback):
-    def __init__(self, plot_synthetic=False):
+    def __init__(self, show=False):
         super().__init__(order=CallbackOrder.External)
-        self.plot_synthetic = plot_synthetic
+        self.show = show
 
     def on_loader_end(self, runner):
         loader = runner.loader
-        # loader = runner.loaders["train"]
-        if type(loader.dataset) is TensorDataset:
-            X = loader.datset.tensors[0]
-            y = loader.dataset.tensors[1]
-        else:
-            X = loader.dataset.data
-            y = loader.dataset.target
-        image_boundry = visualize_decision_boundary(X, y, runner.model, self.plot_synthetic)
-        display.clear_output(wait=True)
-        plt.show()
-        runner.log_figure(tag=f"decision_boundary_{runner.loader_key}", figure=image_boundry)
-
+        image_boundary = visualize_decision_boundary(loader.dataset, runner.model)
+        if self.show:
+            display.clear_output(wait=True)
+            plt.show()
+        runner.log_figure(tag=f"decision_boundary_{runner.loader_key}", figure=image_boundary)
 
 class HypernetVisualization(Callback):
     def __init__(self):

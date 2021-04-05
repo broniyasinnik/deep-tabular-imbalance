@@ -10,49 +10,48 @@ from runners import ClassificationRunner
 from torch.utils.data import TensorDataset, DataLoader
 from experiment_utils import logger
 from datasets import CirclesDataSet
+import warnings
+warnings.filterwarnings("ignore")
 
 torch.random.manual_seed(42)
 
-dataset_train = CirclesDataSet(noise=0.05, minority_samples=100, transform=ToTensor(), target_transform=ToTensor())
-dataset_valid = CirclesDataSet(train=False, noise=0.05, majority_samples=500,
+dataset_train = CirclesDataSet(noise=0.05, majority_samples=2000, minority_samples=100,
+                               noisy_majority_samples=0, noisy_minority_samples=900,
+                               transform=ToTensor(), target_transform=ToTensor())
+
+dataset_valid = CirclesDataSet(train=False, noise=0.05, majority_samples=1000,
                                minority_samples=50, transform=ToTensor(), target_transform=ToTensor())
 
-minority = dataset_train.data[(dataset_train.target==1).squeeze()]
-model = Net(lr=0.2)
-checkpoint = utils.load_checkpoint(path="./logs/circles/imbalance/checkpoints/last.pth")
-utils.unpack_checkpoint(checkpoint=checkpoint, model=model)
-model.produce_samples(n_samples=100, minority=minority)
+model = Net()
 
 criterion = {
-    # "bce": nn.BCEWithLogitsLoss(),
     "bce": nn.BCEWithLogitsLoss(pos_weight=torch.tensor(20.)),
-    "kl": nn.KLDivLoss()
     }
 optimizer = {
-    'model': torch.optim.Adam(model.classifier.parameters(), lr=0.0001),
-    'z': torch.optim.SGD([model.z], lr=0.001)
+    'model': torch.optim.Adam(model.classifier.parameters(), lr=0.001),
 }
 
 loaders = {
     "train": DataLoader(dataset_train, batch_size=64, shuffle=True),
     "valid": DataLoader(dataset_valid, batch_size=64, shuffle=False),
 }
-runner = ClassificationRunner()
-with logger('./logs/circles/meta', mode='debug') as log:
+
+with logger('./logs/circles/syn', mode='debug') as log:
+
+    runner = ClassificationRunner(train_on_synthetic=True)
+    checkpoint = utils.load_checkpoint(path="./logs/circles/bce/checkpoints/last.pth")
+    utils.unpack_checkpoint(checkpoint=checkpoint, model=model)
+
     runner.train(model=model,
                  criterion=criterion,
                  optimizer=optimizer,
                  loaders=loaders,
                  logdir=log,
-                 num_epochs=100,
+                 num_epochs=200,
+                 hparams={"lr_z": 0.01,
+                          "lr_meta": 0.001},
                  callbacks={
-                     "criterion": dl.CriterionCallback(
-                         criterion_key="bce",
-                         metric_key="loss",
-                         input_key="logits",
-                         target_key="targets"),
-                     # "optimizer": dl.OptimizerCallback(metric_key="loss", optimizer_key='model'),
-                     "visualization": DecisionBoundaryCallback(plot_synthetic=True),
+                     "visualization": DecisionBoundaryCallback(show=False),
                      "accuracy": dl.BatchMetricCallback(
                             metric=BalancedAccuracyMetric(), log_on_batch=False,
                             input_key="scores", target_key="targets",
