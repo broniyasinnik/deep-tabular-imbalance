@@ -35,7 +35,7 @@ class CirclesDataSet(Dataset):
                  noisy_minority_samples: int = 0, noisy_majority_samples: int= 0,
                  noise: int = 0.2, transform=None, target_transform=None):
         self.train = train
-        self.majority_samples = majority_samples // 2
+        self.majority_samples = majority_samples
         self.minority_samples = minority_samples
         self.noisy_minority_samples = noisy_minority_samples
         self.noisy_majority_samples = noisy_majority_samples
@@ -72,13 +72,14 @@ class CirclesDataSet(Dataset):
     def make_two_circles(self, seed):
         np.random.seed(seed)
         random.seed(seed)
-        X, y = make_circles(n_samples=2 * self.majority_samples,
+        X, y = make_circles(n_samples=2*self.majority_samples,
                             noise=self.noise)
-        X0, y0 = X[y == 0], y[y == 0][:, None]
+        X0, y0 = X[y == 0][:self.majority_samples//2], y[y == 0][:, None][:self.majority_samples//2]
         X1, y1 = X[y == 1][:self.minority_samples], y[y == 1][:, None][:self.minority_samples]
+        n_in_samples =self.majority_samples-self.majority_samples//2
         X0_in = np.random.multivariate_normal(mean=(0, 0), cov=((0.05, 0), (0, 0.05)),
-                                              size=self.majority_samples)
-        y0_in = np.zeros((self.majority_samples, 1))
+                                              size=n_in_samples)
+        y0_in = np.zeros((n_in_samples, 1))
         X = np.concatenate([X0, X1, X0_in])
         y = np.concatenate([y0, y1, y0_in])
         return X, y

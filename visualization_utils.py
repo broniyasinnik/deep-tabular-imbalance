@@ -46,7 +46,8 @@ def visualize_decision_boundary(dataset: Dataset, model: nn.Module):
         y = dataset.tensors[1]
     else:
         X = dataset.data
-        Syn = dataset.synthetic_data if hasattr(dataset, "synthetic_data") else None
+        syn_X = dataset.synthetic_data if hasattr(dataset, "synthetic_data") else None
+        syn_y = dataset.synthetic_target if hasattr(dataset, "synthetic_target") else None
         y = dataset.target
 
     x_min, x_max = X[:, 0].min() - 1, X[:, 0].max() + 1
@@ -64,8 +65,8 @@ def visualize_decision_boundary(dataset: Dataset, model: nn.Module):
     fig = plt.figure(figsize=(10, 10))
     plt.contourf(xx, yy, Z, cmap=plt.cm.bone, alpha=0.8)
     plt.scatter(X[:, 0], X[:, 1], c=y, s=40, cmap=plt.cm.Spectral)
-    if Syn is not None:
-        plt.scatter(Syn[:, 0], Syn[:, 1], c='g', s=40)
+    if syn_X is not None:
+        plt.scatter(syn_X[:, 0], syn_X[:, 1], c=syn_y, s=40)
     plt.xlim(xx.min(), xx.max())
     plt.ylim(yy.min(), yy.max())
     return fig

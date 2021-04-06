@@ -28,6 +28,7 @@ class Net(nn.Module):
             layer2_bias = self.classifier[2].bias - lr * z_gradients[3]
             layer3_weight = self.classifier[4].weight - lr * z_gradients[4]
             layer3_bias = self.classifier[4].bias - lr * z_gradients[5]
+            # self._gradient_step(lr, gradients=z_gradients)
             out1 = F.linear(x, layer1_weight, layer1_bias)
             out1 = F.relu(out1)
             out2 = F.linear(out1, layer2_weight, layer2_bias)
