@@ -10,17 +10,17 @@ from models.net import Net
 from experiment_utils import ExperimentFactory, load_config, prepare_mlp_classifier
 
 
-def run_meta_experiment(config_file: str, logging_mode: LoggingMode=LoggingMode.OVERWRITE):
+def run_meta_experiment(config_file: str, use_kde: bool = False, logging_mode: LoggingMode = LoggingMode.OVERWRITE):
     config = load_config(config_file)
     set_global_seed(config["seed"])
-    classifier = prepare_mlp_classifier(config["model"]["hiddens"])
+    classifier = prepare_mlp_classifier(input_dim=config.model.input_dim, hidden_dims=config["model"]["hiddens"])
     model = Net(classifier)
     experiment = ExperimentFactory(train_file=config["train_file"],
                                    test_file=config["test_file"],
                                    smote_file=config["smote_file"],
                                    model=model, hparams=config["hparams"])
     utils = experiment.prepare_meta_experiment_with_smote()
-    runner = MetaClassificationRunner(dataset=utils["train_dataset"], use_kde=False)
+    runner = MetaClassificationRunner(dataset=utils["train_dataset"], use_kde=use_kde)
     with experiment_logger(f'{os.path.dirname(config_file)}/logs', name=utils["name"], mode=logging_mode) as logger:
         runner.train(model=model,
                      criterion=utils["criterion"],
@@ -55,7 +55,7 @@ def run_baseline_experiment(config_file: str, baseline: str = "base", logging_mo
     config = load_config(config_file)
     set_global_seed(config["seed"])
 
-    classifier = prepare_mlp_classifier(config["model"]["hiddens"])
+    classifier = prepare_mlp_classifier(input_dim=config.model.input_dim, hidden_dims=config["model"]["hiddens"])
     model = Net(classifier)
 
     experiment = ExperimentFactory(train_file=config["train_file"],
@@ -106,6 +106,7 @@ def run_baseline_experiment(config_file: str, baseline: str = "base", logging_mo
                                                 load_best=True, logger=logger)
     return metrics
 
+
 def run_keel1_experiments():
     for data_name in os.listdir('./Keel1'):
         c_path = f'./Keel1/{data_name}/config.yml'
@@ -114,8 +115,8 @@ def run_keel1_experiments():
         # run_meta_experiment(conf)
         run_meta_experiment(c_path)
 
+
 if __name__ == "__main__":
     conf = f'./Keel1/winequality-red-4/config.yml'
-    run_baseline_experiment(conf, baseline="base")
-    # run_meta_experiment(conf, logging_mode=LoggingMode.DEBUG)
-
+    # run_baseline_experiment(conf, baseline="base")
+    run_meta_experiment(conf, use_kde=False, logging_mode=LoggingMode.DEBUG)

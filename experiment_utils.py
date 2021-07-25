@@ -7,13 +7,14 @@ import numpy as np
 import pandas as pd
 import torch.nn as nn
 from enum import Enum
-from catalyst import utils
+from ml_collections import ConfigDict
 from matplotlib import pyplot as plt
 from torch.utils.data import DataLoader
 from catalyst.data.sampler import BalanceClassSampler
+from sklearn.model_selection import train_test_split
 from datasets import SyntheticDataset
 from datasets import TableDataset
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union
 
 
 class ExperimentLogger:
@@ -92,12 +93,13 @@ class experiment_logger:
 class ExperimentFactory:
     def __init__(self, train_file: str = None, test_file: str = None,
                  holdout_file: str = None, smote_file: str = None,
-                 model=None, hparams: Dict[str, Any] = None):
+                 model=None, seed: float = None, hparams: Dict[str, Any] = None):
         self.train_file = train_file
         self.test_file = test_file
         self.smote_file = smote_file
         self.holdout_file = holdout_file
         self.hparams = hparams
+        self.seed = seed
 
         self.model = model
         # self.criterion = {
@@ -105,8 +107,8 @@ class ExperimentFactory:
         #     "bce_weighted": nn.BCEWithLogitsLoss(pos_weight=torch.tensor(self.hparams["ir"]))
         # }
         self.criterion = nn.BCEWithLogitsLoss()
-
-        self.optimizer = torch.optim.Adam(self.model.classifier.parameters(), lr=self.hparams["lr_model"])
+        if model is not None:
+            self.optimizer = torch.optim.Adam(self.model.classifier.parameters(), lr=self.hparams["lr_model"])
 
     def prepare_potential_experiment(self):
         train_data = TableDataset.from_npz([self.train_file, self.holdout_file], train=True)
@@ -120,6 +122,25 @@ class ExperimentFactory:
             "loaders": loaders,
             "criterion": self.criterion,
             "optimizer": self.optimizer
+        }
+        return e_utils
+
+    def prepare_optuna_experiment(self, validation_size: float = 0.2):
+        data = np.load(self.train_file)
+        X, y = data["X"], data["y"]
+        X_train, X_valid, y_train, y_valid = train_test_split(X, y, stratify=y,
+                                                              test_size=validation_size, random_state=self.seed)
+        train_data = TableDataset(features=X_train, targets=y_train)
+        valid_data = TableDataset(features=X_valid, targets=y_valid)
+        loaders = {
+            "train": DataLoader(train_data, batch_size=self.hparams['batch_size'], shuffle=True),
+            "valid": DataLoader(valid_data, batch_size=self.hparams['batch_size'], shuffle=False)
+        }
+        e_utils = {
+            "name": 'optuna',
+            "loaders": loaders,
+            "criterion": self.criterion,
+            # "optimizer": self.optimizer
         }
         return e_utils
 
@@ -205,21 +226,21 @@ class ExperimentFactory:
         return e_utils
 
 
-def load_config(conf):
+def load_config(conf: str) -> ConfigDict:
     stream = open(conf, 'r')
     d = yaml.load(stream, Loader=yaml.FullLoader)
-    return d
+    return ConfigDict(d)
 
 
-def prepare_mlp_classifier(hidden_szs: List[int]):
+def prepare_mlp_classifier(input_dim: int, hidden_dims: Union[int, List[int]], output_dim: int = 1):
     layers = []
-    hidden_inps = hidden_szs
-    hidden_outs = hidden_inps[1:]
-    hidden_outs.append(1)
+    hidden_dims = hidden_dims if type(hidden_dims) == list else [hidden_dims]
+    inps = [input_dim] + hidden_dims
+    outs = hidden_dims + [output_dim]
 
-    for inp_sz, out_sz in zip(hidden_inps, hidden_outs):
-        layers.append(nn.Linear(inp_sz, out_sz))
-        if out_sz != 1:
+    for inp, out in zip(inps, outs):
+        layers.append(nn.Linear(inp, out))
+        if out != 1:
             layers.append(nn.ReLU())
 
     classifier = nn.Sequential(*layers)
