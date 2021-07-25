@@ -1,7 +1,10 @@
-from models.transforms import OneHotTransform
+from datasets import TableDataset
+from data_utils import TableConfig
+from models.transforms import TableColumnsTransform
+
+def test_table_column_transform():
+    config = TableConfig('data/config.json')
+    columns_t = TableColumnsTransform(config=config)
+    dataset = ...
 
 
-def test_one_hot_transform(adult):
-    one_hot = OneHotTransform(adult.categorical_cols, adult.categories_sizes)
-    result = one_hot(adult.data[0])
-    assert True

@@ -2,6 +2,7 @@ import torch
 from typing import List
 import numpy as np
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder
+from data_utils import TableConfig
 
 
 class ToTensor(object):
@@ -10,6 +11,8 @@ class ToTensor(object):
         if arr.size == 1:
             arr = np.array(arr)
         return torch.from_numpy(arr).type(dtype)
+
+
 
 
 class OneHotTransform:

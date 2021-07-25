@@ -1,3 +1,5 @@
+import os
+
 import torch
 from IPython import display
 from torch.utils.data import TensorDataset
@@ -47,6 +49,36 @@ class LogPRCurve(Callback):
                                  global_step=runner.stage_epoch_step)
 
 
+class SaveSyntheticData(Callback):
+    def __init__(self, log_dir: str, save_best: bool= True, save_last:bool = False):
+        super().__init__(order=CallbackOrder.External)
+        self.log_dir = os.path.join(log_dir, "z_synthetic")
+        self.save_best = save_best
+        self.save_last = save_last
+        self.best_valid_metric = None
+
+    def is_better(self, epoch_metric, minimize: bool):
+        if minimize and epoch_metric <= self.best_valid_metric:
+            return True
+        if not minimize and epoch_metric > self.best_valid_metric:
+            return True
+        return False
+
+    def on_epoch_end(self, runner: "IRunner") -> None:
+        if self.save_best:
+            dataset = runner.get_datasets(stage=runner.stage_key)["train"]
+            synthetic = dataset.get_synthetic_dataset()
+            epoch_metric = runner.epoch_metrics["valid"][runner._valid_metric]
+            if self.best_valid_metric is None:
+                self.best_valid_metric = epoch_metric
+            if self.is_better(epoch_metric, minimize=runner._minimize_valid_metric):
+                np.savez(self.log_dir, X=synthetic["X"],  y=synthetic["y"])
+                self.best_valid_metric = epoch_metric
+        if self.save_last:
+            # @TODO: Add option for saving the last
+            ...
+
+
 class DecisionBoundaryCallback(Callback):
     def __init__(self, show=False):
         super().__init__(order=CallbackOrder.External)
@@ -73,6 +105,7 @@ class HypernetVisualization(Callback):
         y = np.concatenate([y_data, y_syn])
         image_dataset = visualize_dataset(X, y)
         runner.log_figure(tag="syntetic", figure=image_dataset)
+
 
 class LogGANProjection(Callback):
     def __init__(self, log_dir: str, tag: str, samples: int = 200):

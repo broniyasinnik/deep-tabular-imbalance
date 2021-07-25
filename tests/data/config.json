@@ -1,0 +1,70 @@
+[
+ {
+        "max": 23713,
+        "min": 10798,
+        "name": "age",
+        "type": "continuous"
+    },
+    {
+        "size": 2,
+        "name": "gender",
+        "type": "categorical"
+    },
+    {
+      "max": 250,
+      "min": 55,
+      "name": "height",
+      "type": "continuous"
+    },
+    {
+      "max": 200.0,
+      "min": 10.0,
+      "name": "weight",
+      "type": "continuous"
+    },
+  {
+    "max": 16020,
+    "min": -150,
+    "name": "ap_hi",
+    "type": "continuous"
+
+  },
+  {
+    "max": 11000,
+    "min": -70,
+    "name": "ap_lo",
+    "type": "continuous"
+  },
+  {
+    "size": 3,
+    "name": "cholesterol",
+    "type": "categorical"
+  },
+  {
+    "size": 3,
+   "name": "gluc",
+    "type": "categorical"
+  },
+  {
+    "size": 2,
+    "name": "smoke",
+    "type": "categorical"
+  },
+  {
+    "size": 2,
+    "name": "alco",
+    "type": "categorical"
+  },
+  {
+    "size": 2,
+    "name": "active",
+    "type": "categorical"
+  },
+  {
+    "size": 2,
+    "name": "cardio",
+    "type": "categorical"
+  }
+
+]
+

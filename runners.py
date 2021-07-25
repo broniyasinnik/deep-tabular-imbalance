@@ -1,36 +1,91 @@
+import os
 import torch
-import catalyst.dl as dl
 import numpy as np
+import catalyst.dl as dl
+import torch.nn.functional as F
+from collections import OrderedDict
+from models.networks import GaussianKDE
 from torch.autograd import grad
 from catalyst import metrics
-from pathlib import Path
-import torch.nn.functional as F
-from typing import Mapping, Any
-from torch.utils.tensorboard import SummaryWriter
+from datasets import SyntheticDataset
+from catalyst import utils
+from sklearn.metrics import precision_recall_curve, average_precision_score
+from typing import Mapping, Any, Optional, Dict
+from experiment_utils import ExperimentLogger
 
 
-class ClassificationRunner(dl.Runner):
-    def __init__(self, train_on_synthetic=False):
-        super(ClassificationRunner, self).__init__()
-        self.train_on_synthetic = train_on_synthetic
-
+class LoggingMixin:
     def log_figure(self, tag: str, figure: np.ndarray):
         tb_loggers = self.loggers['_tensorboard']
         tb_loggers._check_loader_key(loader_key=self.loader_key)
         writer = tb_loggers.loggers[self.loader_key]
         writer.add_figure(tag, figure, global_step=self.global_epoch_step)
 
+    @torch.no_grad()
+    def log_evaluation_results(self, loader, logger: ExperimentLogger = None, model=None,
+                         load_best: bool = True,
+                         load_last: bool = False) -> Dict:
+        if model == None:
+            model = self.model
+        assert model is not None
+
+        if load_best:
+            checkpoint = utils.load_checkpoint(
+                os.path.join(logger.logdir, 'checkpoints/best.pth'))
+            utils.unpack_checkpoint(checkpoint, model=self.model)
+        elif load_last:
+            checkpoint = utils.load_checkpoint(
+                os.path.join(logger.logdir, 'checkpoints/last.pth'))
+            utils.unpack_checkpoint(checkpoint, model=self.model)
+
+        labels = []
+        scores = []
+        for batch in loader:
+            x, y = batch['features'], batch['targets']
+            y_hat = model(x)
+            labels.append(y.numpy())
+            scores.append(torch.sigmoid(y_hat).numpy())
+        labels = np.concatenate(labels).squeeze()
+        scores = np.concatenate(scores).squeeze()
+        precision, recall, thresholds = precision_recall_curve(labels, scores, pos_label=1.)
+        thresholds = np.concatenate([thresholds, [1.]])
+        ap = average_precision_score(labels, scores, pos_label=1.)
+        results_dict = {"predictions": {"labels": labels, "scores": scores},
+                        "pr_curve": {"precision": precision,
+                                     "recall": recall,
+                                     "thresholds": thresholds},
+                        "average_precision": ap}
+
+        logger.log_results(results_dict)
+
+
+class MetaClassificationRunner(dl.Runner, LoggingMixin):
+
+    def __init__(self, dataset: SyntheticDataset, use_kde: bool=True,  *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.dataset = dataset
+        self.use_kde = use_kde
+        if use_kde:
+            real = self.dataset.get_real_dataset()
+            real_x, real_y = real["X"], real["y"]
+            minority = torch.tensor(real_x[real_y == 1.], dtype=torch.float32)
+            self.bw = torch.cdist(minority, minority).median()
+            self.kde = GaussianKDE(X=minority, bw=self.bw)
+
     def on_loader_start(self, runner):
         super().on_loader_start(runner)
-        if self.train_on_synthetic and self.loader_key == "train":
+        if self.loader_key == "train":
+            loss_lst = ["loss", "loss_holdout"]
+            if self.use_kde:
+                loss_lst.append("loss_kde")
             self.meters = {
                 key: metrics.AdditiveValueMetric(compute_on_call=False)
-                for key in ["loss_x", "loss_z"]
+                for key in loss_lst
             }
         else:
             self.meters = {
                 key: metrics.AdditiveValueMetric(compute_on_call=False)
-                for key in ["loss_x"]
+                for key in ["loss"]
             }
 
     def on_loader_end(self, runner):
@@ -38,59 +93,116 @@ class ClassificationRunner(dl.Runner):
             self.loader_metrics[key] = self.meters[key].compute()[0]
         super().on_loader_end(runner)
 
-    def handle_batch(self, batch):
-        x, y = batch['features'], batch['targets']
-        optimizers = self.get_optimizer("train", '')
-        optimizer_model = optimizers['model']
+    def on_epoch_end(self, runner: "IRunner"):
+        runner.loaders["train"].dataset.shuffle_holdout_index()
+
+    def get_datasets(self, stage: str) -> "OrderedDict[str, Dataset]":
+        if stage == "train":
+            return OrderedDict({"train": self.dataset})
+
+    def handle_batch(self, batch: Mapping[str, Any]) -> None:
         if self.is_train_loader:
-            if self.train_on_synthetic:
-                z = torch.tensor(self.loader.dataset.synthetic_data, dtype=torch.float32, requires_grad=True)
-                yz = torch.tensor(self.loader.dataset.synthetic_target)
+            is_synthetic = batch["is_synthetic"]
+            index = batch["index"]
+            x = batch["features"][~is_synthetic]
+            y = batch["target"][~is_synthetic]
+            synth_x = batch["features"][is_synthetic]
+            synth_y = batch["target"][is_synthetic]
+            holdout_x = batch["holdout_features"]
+            holdout_y = batch["holdout_target"]
 
-                # Create optimizer for synthetic points
-                optimizer_z = torch.optim.SGD([z], lr=self.hparams["lr_z"])
-                optimizer_z.zero_grad()
-                optimizer_model.zero_grad()
+            # Calculate loss on the synthetic batch
+            with torch.no_grad():
+                logits = self.model(batch["features"])
+                loss = F.binary_cross_entropy_with_logits(logits, batch["target"].reshape_as(logits))
+                self.batch_metrics.update({"loss": loss})
 
-                # Calculate the gradient of the loss on the synthetic points
-                pz = self.model(z)
-                loss_z = F.binary_cross_entropy_with_logits(pz, yz)
-                gradients = grad(loss_z, self.model.parameters(), create_graph=True)
-                y_hat = self.model(x, lr=self.hparams["lr_meta"], z_gradients=gradients)
-                loss_x = self.get_criterion(self.stage_key)['bce'](y_hat, y)
+            # Update model on real points
+            px = self.model(x)
+            self.optimizer.zero_grad()
+            loss = F.binary_cross_entropy_with_logits(px, y.reshape_as(px))
+            gradients_x = grad(loss, self.model.parameters())
+            # loss.backward(retain_graph=True)
 
-                # log metrics
-                self.batch_metrics.update({
-                    "loss_x": loss_x,
-                    "loss_z": loss_z
-                })
+            # Create optimizer for synthetic points
+            z = synth_x.clone().detach().requires_grad_(True)
+            optimizer_z = torch.optim.SGD([z], lr=self.hparams["lr_z"])
+            optimizer_z.zero_grad()
 
-                # Update model and z
-                loss = loss_x #+loss_z
-                loss.backward()
-                optimizer_z.step()
-                optimizer_model.step()
-                self.loader.dataset.synthetic_data = z.detach().numpy()
-            else:
-                y_hat = self.model(x)
-                loss_x = self.get_criterion(self.stage_key)['bce'](y_hat, y)
-                self.batch_metrics.update({
-                    "loss_x": loss_x
-                })
-                loss_x.backward()
-                optimizer_model.step()
-                optimizer_model.zero_grad()
+            # Calculate the gradient of the loss on the synthetic points
+            pz = self.model(z)
+            loss_z = F.binary_cross_entropy_with_logits(pz, synth_y.reshape_as(pz))
+            gradients_z = grad(loss_z, self.model.parameters(), create_graph=True)
+
+            # Take one gradient step with gradients obtained on z, and calculate loss on holdout
+            gradients = tuple(gradients_z[i]+gradients_x[i] for i in range(len(gradients_z)))
+            logits = self.model(holdout_x, lr=self.hparams["lr_meta"], z_gradients=gradients)
+            loss_holdout = F.binary_cross_entropy_with_logits(logits, holdout_y.reshape_as(logits))
+            loss_holdout.backward()
+            self.batch_metrics.update({
+                "loss_holdout": loss_holdout.data
+            })
+
+            if self.use_kde:
+                z1 = torch.clone(z.detach())
+                z1.requires_grad = True
+                loss_kde = -self.kde.log_prob(z1)
+                self.batch_metrics.update({"loss_kde": loss_kde})
+                loss_kde.backward()
+                z = z-self.hparams["lr_kde"] * z1.grad
+
+            # z.grad = z.grad / self.hparams["lr_meta"]
+            optimizer_z.step()
+
+            # Save the update for model with the gradients obtained on z
+            self.model._gradient_step(lr=self.hparams["lr_meta"], gradients=gradients)
+            # self.optimizer.step()
+
+            # Update
+            ids = index[is_synthetic]
+            self.loader.dataset.features[ids] = z.detach()
 
         elif self.is_valid_loader:
+            x, y = batch['features'], batch['targets']
             y_hat = self.model(x)
-            loss_x = self.get_criterion(self.stage_key)['bce'](y_hat, y)
+            loss_x = self.criterion(y_hat, y.reshape_as(y_hat))
             self.batch_metrics.update({
-                "loss_x": loss_x
+                "loss": loss_x
             })
+
+            self.batch = {
+                "features": x,
+                "targets": y.view(-1, 1),
+                "logits": y_hat,
+                "scores": torch.sigmoid(y_hat.view(-1)),
+            }
 
         for key in self.meters:
             self.meters[key].update(self.batch_metrics[key].item(), self.batch_size)
 
+
+class ClassificationRunner(dl.Runner, LoggingMixin):
+
+    def on_loader_start(self, runner: "IRunner"):
+        super().on_loader_start(runner)
+        self.meters = {
+            "loss_x": metrics.AdditiveValueMetric(compute_on_call=False)
+        }
+
+
+    def handle_batch(self, batch):
+        x, y = batch['features'], batch['targets']
+        y_hat = self.model(x)
+        if self.is_train_loader:
+            loss = self.criterion(y_hat, y.reshape_as(y_hat))
+            loss.backward()
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+        elif self.is_valid_loader:
+            loss = self.criterion(y_hat, y.reshape_as(y_hat))
+
+        self.batch_metrics.update({"loss_x": loss})
+        self.meters["loss_x"].update(self.batch_metrics["loss_x"].item(), self.batch_size)
 
         self.batch = {
             "features": x,
@@ -99,342 +211,6 @@ class ClassificationRunner(dl.Runner):
             "scores": torch.sigmoid(y_hat.view(-1)),
         }
 
-
-class OldClassificationRunner(dl.SupervisedRunner):
-    def __init__(self, use_hyper_network=False, use_gan_to_balance=False, **kwargs):
-        super(OldClassificationRunner, self).__init__(**kwargs)
-        self.use_gan_to_balance = use_gan_to_balance
-        self.use_hyper_network = use_hyper_network
-
-    def predict_batch(self, batch):
-        with torch.no_grad():
-            encoded_data = self.model["encoder"](batch['input'].to(self.device))
-            output = self.model["classifier"](encoded_data).view(batch['input'].size(0), -1)
-            output = torch.sigmoid(output)
-            output = torch.where(output > 0.5, torch.ones_like(output), torch.zeros_like(output))
-            return output
-
-    def log_figure(self, tag: str, figure: np.ndarray):
-        with SummaryWriter(Path(self.logdir) / tag) as w:
-            w.add_figure(tag, figure, global_step=self.epoch)
-
-    def log_prediction_from_logits(self):
-        with torch.no_grad():
-            logits = self.output["logits"]
-            preds = torch.sigmoid(logits)
-            preds = torch.where(preds > 0.5, torch.ones_like(preds), torch.zeros_like(preds))
-            self.output.update({"preds": preds})
-
-    def _handle_classification_via_hyper_network(self, input_data):
-        hypernet = self.model["hypernetwork"]
-        x_syn, y_syn = hypernet.x_syn, hypernet.y_syn
-        # Calculate regularization
-        hypernet.hyper_forward(input_data)
-        regularization = hypernet.weight_regularization_loss()
-        # Calculate loss
-        hypernet.hyper_forward(x_syn)
-        logits_syn = hypernet(x_syn)
-        loss_h = F.binary_cross_entropy_with_logits(logits_syn, y_syn) + regularization
-        self.batch_metrics.update({'loss_h': loss_h})
-
-        logits = hypernet(input_data)
-        return logits
-
-    def _handle_classification_via_gan(self, input_data, input_labels):
-        batch_size = input_data.shape[0]
-        if self.loader_key == 'train':
-            with torch.no_grad():
-                real_data = self.model["encoder"](input_data)
-                gan_labels = 1 - input_labels
-                generated_data, _ = self.model["generator"].sample_latent_vectors(batch_size, gan_labels)
-                encoded_data = torch.cat([real_data, generated_data])
-                targets = torch.cat([input_labels, gan_labels])
-        else:
-            encoded_data = self.model["encoder"](input_data)
-            targets = input_labels
-
-        logits = self.model["classifier"](encoded_data)
-        return logits, targets
-
-    def _handle_batch(self, batch):
-        input_data, input_labels = batch['input'].to(self.device), batch['label'].to(self.device).view(-1, 1)
-        batch_size = input_data.shape[0]
-        # Use GAN to generate samples to balance the batch
-        if self.use_gan_to_balance:
-            logits, targets = self._handle_classification_via_gan(input_data, input_labels)
-        elif self.use_hyper_network:
-            logits = self._handle_classification_via_hyper_network(input_data)
-            targets = input_labels
-        else:
-            encoded_data = self.model["encoder"](input_data)
-            targets = input_labels
-            logits = self.model["classifier"](encoded_data)
-
-        self.output = {"logits": logits}
-        self.input = {"targets": targets}
-        self.log_prediction_from_logits()
-
-
-class ACGANRunner(dl.Runner):
-
-    def _handle_batch(self, batch):
-        data = batch[0].to(self.device)
-        data = self.model["encoder"](data)
-        real_labels = batch[1].to(self.device)
-        self.input = {"features": data, "targets": real_labels.view(-1, 1)}
-        if self.is_infer_stage:
-            with torch.no_grad():
-                logits = self.model["discriminator"](data)[:, 0]
-                self.output = {"logits": logits}
-
-        if self.is_valid_loader:
-            with torch.no_grad():
-                logits = self.model["discriminator"](data)[:, 0]
-                self.batch_metrics["loss_classification"] = \
-                    F.binary_cross_entropy_with_logits(logits, real_labels)
-                y_hat = torch.sigmoid(logits)
-                preds = torch.where(y_hat > 0.5, torch.ones_like(y_hat), torch.zeros_like(y_hat))
-                self.output = {"logits": logits, "preds": preds.view(-1, 1)}
-        elif self.is_train_loader:
-            batch_metrics = {}
-            # Sample random points in the latent space
-            latent_dim = 10
-            batch_size = data.shape[0]
-            gen_labels = (1 - real_labels).view(-1, 1)
-            random_latent_vectors = torch.randn(batch_size, latent_dim).to(self.device)
-
-            # Concat latent vectors with conditional label
-            conditional_latent_vectors = torch.cat([random_latent_vectors, gen_labels], dim=1)
-
-            # Decode them to fake data
-            generated_data = self.model["generator"](conditional_latent_vectors).detach()
-            # Combine them with real data
-            combined_data = torch.cat([generated_data, data])
-
-            # Assemble labels discriminating real from fake images
-            labels = torch.cat([
-                torch.ones((batch_size, 1)), torch.zeros((batch_size, 1))
-            ]).to(self.device)
-            # Assemble labels for classification
-            class_labels = torch.cat([
-                gen_labels, real_labels.view(-1, 1)
-            ])
-
-            # Add random noise to the labels - important trick!
-            # labels += 0.05 * torch.rand(labels.shape).to(self.device)
-
-            # Train the discriminator
-            predictions = self.model["discriminator"](combined_data)
-            fake_predictions = predictions[:, 1].view(-1, 1)
-            class_predictions = predictions[:, 0].view(-1, 1)
-
-            # Log the classification performance on the real data
-            logits = class_predictions[batch_size:]
-            preds = torch.sigmoid(logits)
-            preds = torch.where(preds > 0.5, torch.ones_like(preds), torch.zeros_like(preds))
-            self.output = {"logits": logits, "preds": preds}
-
-            batch_metrics["loss_discriminator"] = \
-                F.binary_cross_entropy_with_logits(fake_predictions, labels) + \
-                F.binary_cross_entropy_with_logits(class_predictions, class_labels)
-
-            # Sample random points in the latent space
-            random_latent_vectors = torch.randn(batch_size, latent_dim).to(self.device)
-            p = 1 / 2 * torch.ones((batch_size, 1))
-            random_labels = torch.bernoulli(p).to(self.device)
-            conditional_latent_vectors = torch.cat([random_latent_vectors, random_labels], dim=1)
-            # Assemble labels that say "all real images"
-            misleading_labels = torch.zeros((batch_size, 1)).to(self.device)
-
-            # Train the generator
-            generated_data = self.model["generator"](conditional_latent_vectors)
-            predictions = self.model["discriminator"](generated_data)
-            fake_predictions = predictions[:, 1].view(-1, 1)
-            class_predictions = predictions[:, 0].view(-1, 1)
-            batch_metrics["loss_generator"] = \
-                F.binary_cross_entropy_with_logits(fake_predictions, misleading_labels) + \
-                F.binary_cross_entropy_with_logits(class_predictions, random_labels)
-
-            self.batch_metrics.update(**batch_metrics)
-
-
-class CGANRunner(dl.Runner):
-    def __init__(self, wassernstain=False, critic_steps=1, **kwargs):
-        super(CGANRunner, self).__init__(**kwargs)
-        self.wassernstain = wassernstain
-        self.critic_steps = critic_steps
-
-    def calc_gradient_penalty(self, real_data, fake_data):
-        batch_size = real_data.size()[0]
-        alpha = torch.rand(batch_size, 1)
-        alpha = alpha.expand(real_data.size())
-
-        interpolates = alpha * real_data + ((1 - alpha) * fake_data)
-
-        interpolates = torch.autograd.Variable(interpolates, requires_grad=True)
-
-        disc_interpolates = self.model["discriminator"](interpolates)
-
-        gradients = torch.autograd.grad(outputs=disc_interpolates, inputs=interpolates,
-                                        grad_outputs=torch.ones(disc_interpolates.size()),
-                                        create_graph=True, retain_graph=True, only_inputs=True)[0]
-
-        gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * 10
-        return gradient_penalty
-
-    def log_embeddings(self):
-        embeddings_dict = dict()
-        with torch.no_grad():
-            for loader_key in self.loaders:
-                embedding = []
-                labels = []
-                for batch in self.loaders[loader_key]:
-                    embedding.append(self.model["encoder"](batch["input"]))
-                    labels.append(batch["label"])
-                embedding = torch.cat(embedding)
-                labels = torch.cat(labels)
-                embeddings_dict[loader_key] = {"embedding": embedding,
-                                               "labels": labels}
-
-        return embeddings_dict
-
-    def _handle_train_batch(self, input_data, input_labels):
-        batch_size = input_data.shape[0]
-        batch_metrics = {}
-
-        # Train Discriminator
-        self.model["discriminator"].zero_grad()
-        # Generate batch samples
-        generate_labels = input_labels
-        latent_vectors, _ = self.model["generator"].sample_latent_vectors(batch_size, generate_labels)
-        generated_input = self.model["generator"](latent_vectors).detach()
-        generated_input = torch.cat([generated_input,
-                                     generate_labels], dim=-1)  # In Conditional GAN we include the label
-        scores_fake = self.model["discriminator"](generated_input)
-        with torch.no_grad():
-            encoded_input = self.model["encoder"](input_data).detach()
-            encoded_input = torch.cat([encoded_input,
-                                       input_labels], dim=-1)  # In Conditional GAN we include the label
-        scores_real = self.model["discriminator"](encoded_input)
-
-        if self.wassernstain:
-            batch_metrics["loss_discriminator"] = scores_fake.mean() - scores_real.mean()
-            batch_metrics["loss_gp"] = self.calc_gradient_penalty(encoded_input, generated_input)
-        else:
-            loss_discriminator = F.binary_cross_entropy_with_logits(scores_real, torch.zeros_like(scores_real))
-            loss_discriminator += F.binary_cross_entropy_with_logits(scores_fake, torch.ones_like(scores_fake))
-            batch_metrics["loss_discriminator"] = loss_discriminator
-
-        self.optimizer["discriminator"].step()
-
-        # Train the generator
-        if self.loader_batch_step % self.critic_steps == 0:
-            self.model["generator"].zero_grad()
-            random_latent_vectors, generated_labels = self.model["generator"].sample_latent_vectors(batch_size,
-                                                                                                    input_labels)
-            generated_vectors = self.model["generator"](random_latent_vectors)
-            generated_vectors = torch.cat([generated_vectors,
-                                           generated_labels], dim=-1)  # In Conditional GAN we include the label
-            g_scores_fake = self.model["discriminator"](generated_vectors)
-            if self.wassernstain:
-                batch_metrics["loss_generator"] = -g_scores_fake.mean()
-            else:
-                loss_generator = F.binary_cross_entropy_with_logits(g_scores_fake, torch.zeros_like(g_scores_fake))
-                batch_metrics["loss_generator"] = loss_generator
-            self.optimizer["generator"].step()
-
-        self.batch_metrics.update(**batch_metrics)
-
-    def _handle_batch(self, batch: Mapping[str, Any]) -> None:
-        input_data, input_labels = batch["input"].to(self.device), batch["label"].to(self.device).view(-1, 1)
-        self.input["targets"] = input_labels
-        self._handle_train_batch(input_data, input_labels)
-
-# class GANRunner(dl.Runner):
-#     def __init__(self, *, include_classifier=True, **kwargs):
-#         super(GANRunner, self).__init__(**kwargs)
-#         self.include_classifier = include_classifier
-#
-#     def log_classification(self, logits):
-#         # Log the classification performance on the real data
-#         probabilities = torch.sigmoid(logits)
-#         predictions = torch.where(probabilities > 0.5, torch.ones_like(probabilities), torch.zeros_like(probabilities))
-#         self.output = {"logits": logits, "preds": predictions}
-#
-#     def log_encoded_input(self, encoded_input):
-#         self.output = {"encoded": encoded_input.detach()}
-#
-#     def _handle_train_batch(self, input_data, input_labels):
-#         batch_size = input_data.shape[0]
-#         batch_metrics = {}
-#
-#         # Generate samples to rebalance the batch
-#         if self.include_classifier:
-#             generate_labels = (1 - input_labels)
-#         else:
-#             generate_labels = input_labels
-#         conditioned_latent_vectors, _ = self.model.sample_latent_vectors(batch_size, generate_labels)
-#         generated_input = self.model.generator(conditioned_latent_vectors).detach()
-#         generated_input = torch.cat([generated_input,
-#                                      generate_labels], dim=-1)  # In Conditional GAN we include the label
-#
-#         # Train Discriminator
-#         with torch.no_grad():
-#             encoded_input = self.model.encoder(input_data).detach()
-#             self.log_encoded_input(encoded_input)
-#             encoded_input = torch.cat([encoded_input,
-#                                        input_labels], dim=-1)  # In Conditional GAN we include the label
-#         balanced_batch = torch.cat([generated_input, encoded_input])
-#         discriminator_logits = self.model.discriminator(balanced_batch)
-#         real_labels = torch.cat([torch.ones_like(generate_labels), torch.zeros_like(input_labels)])
-#         loss_discriminator = F.binary_cross_entropy_with_logits(discriminator_logits,
-#                                                                 real_labels)
-#         batch_metrics["loss_discriminator"] = loss_discriminator
-#
-#         if self.include_classifier:
-#             # Train Classifier
-#             encoded_input = self.model.encoder(input_data)
-#             balanced_batch = torch.cat([generated_input, encoded_input])
-#             classification_logits = self.model.classifier(balanced_batch)
-#             balanced_labels = torch.cat([generate_labels, input_labels])
-#             loss_classifier = F.binary_cross_entropy_with_logits(classification_logits, balanced_labels)
-#
-#             # Log classification results
-#             self.log_classification(classification_logits[batch_size:])
-#
-#         # Train the generator
-#         random_latent_vectors, generated_labels = self.model.sample_latent_vectors(batch_size)
-#         misleading_real_labels = torch.zeros((batch_size, 1)).to(self.device)
-#         generated_vectors = self.model.generator(random_latent_vectors)
-#         generated_vectors = torch.cat([generated_vectors,
-#                                        generated_labels], dim=-1)  # In Conditional GAN we include the label
-#         discriminator_predictions = self.model.discriminator(generated_vectors)
-#         loss_generator = F.binary_cross_entropy_with_logits(discriminator_predictions, misleading_real_labels)
-#         batch_metrics["loss_generator"] = loss_generator
-#
-#         # Train the classifier
-#         if self.include_classifier:
-#             random_latent_vectors, random_labels = self.sample_latent_vectors(batch_size)
-#             misleading_class_labels = 1 - random_labels
-#             generated_vectors = self.model.generator(random_latent_vectors)
-#             classification_predictions = self.model.classifier(generated_vectors)
-#             loss_classifier += F.binary_cross_entropy_with_logits(classification_predictions, misleading_class_labels)
-#             batch_metrics["loss_classification"] = loss_classifier
-#
-#         self.batch_metrics.update(**batch_metrics)
-#
-#     def _handle_valid_batch(self, input_data, input_labels):
-#         with torch.no_grad():
-#             encoded_input = self.model.encoder(input_data)
-#             classification_logits = self.model.classifier(encoded_input)
-#             self.batch_metrics["loss_classification"] = F.binary_cross_entropy_with_logits(classification_logits,
-#                                                                                            input_labels)
-#             self.log_classification(classification_logits)
-#
-#     def _handle_batch(self, batch: Mapping[str, Any]) -> None:
-#         input_data, input_labels = batch["input"].to(self.device), batch["label"].to(self.device).view(-1, 1)
-#         self.input["targets"] = input_labels
-#         if self.stage == "train" or self.stage == "infer":
-#             self._handle_train_batch(input_data, input_labels)
-#         if self.stage == "valid":
-#             self._handle_valid_batch(input_data, input_labels)
+    def on_loader_end(self, runner: "IRunner"):
+        self.loader_metrics["loss_x"] = self.meters["loss_x"].compute()[0]
+        super().on_loader_end(runner)

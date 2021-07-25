@@ -1,12 +1,14 @@
 import io
 import cv2
 import torch
+import os
 import numpy as np
 import torch.nn as nn
 from torch.utils.data import Dataset, TensorDataset
+from datasets import TableDataset
 import matplotlib.pyplot as plt
-
-from IPython import display
+from typing import Dict
+from torch.utils.tensorboard import SummaryWriter
 
 
 def visualize_dataset(dataset):
@@ -16,6 +18,13 @@ def visualize_dataset(dataset):
     plt.scatter(X[:, 0], X[:, 1], c=y, s=20, cmap='jet')
     return fig
 
+
+def projection(data: Dict[str, TableDataset], logdir: str, name: str='projection'):
+    writer = SummaryWriter(os.path.join(logdir, name))
+    features = torch.cat([torch.tensor(tb.data) for tb in data.values()])
+    labels = [f'{name}:{int(label)}' for name, tb in data.items() for label in tb.target.tolist()]
+    writer.add_embedding(features, metadata=labels)
+    writer.close()
 
 def get_img_from_fig(fig, dpi=180):
     buf = io.BytesIO()
