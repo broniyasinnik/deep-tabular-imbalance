@@ -5,13 +5,34 @@ import catalyst.dl as dl
 import torch.nn.functional as F
 from collections import OrderedDict
 from models.networks import GaussianKDE
+from torch.utils.data import DataLoader
 from torch.autograd import grad
 from catalyst import metrics
 from datasets import SyntheticDataset
 from catalyst import utils
 from sklearn.metrics import precision_recall_curve, average_precision_score
 from typing import Mapping, Any, Optional, Dict
-from experiment_utils import ExperimentLogger
+from experiment_utils import save_predictions, save_pr_curve, save_metrics
+
+
+@torch.no_grad()
+def evaluate_model(model, loader: DataLoader, logdir: str):
+    labels = []
+    scores = []
+    for batch in loader:
+        x, y = batch['features'], batch['targets']
+        y_hat = model(x)
+        labels.append(y.numpy())
+        scores.append(torch.sigmoid(y_hat).numpy())
+    labels = np.concatenate(labels).squeeze()
+    scores = np.concatenate(scores).squeeze()
+    precision, recall, thresholds = precision_recall_curve(labels, scores, pos_label=1.)
+    thresholds = np.concatenate([thresholds, [1.]])
+    ap = average_precision_score(labels, scores, pos_label=1.)
+    save_predictions(labels, scores, logdir)
+    save_pr_curve(precision, recall, thresholds, ap, logdir)
+    save_metrics(precision=precision, recall=recall,
+                 ap=ap, logdir=logdir)
 
 
 class LoggingMixin:
@@ -21,47 +42,10 @@ class LoggingMixin:
         writer = tb_loggers.loggers[self.loader_key]
         writer.add_figure(tag, figure, global_step=self.global_epoch_step)
 
-    @torch.no_grad()
-    def log_evaluation_results(self, loader, logger: ExperimentLogger = None, model=None,
-                         load_best: bool = True,
-                         load_last: bool = False) -> Dict:
-        if model == None:
-            model = self.model
-        assert model is not None
-
-        if load_best:
-            checkpoint = utils.load_checkpoint(
-                os.path.join(logger.logdir, 'checkpoints/best.pth'))
-            utils.unpack_checkpoint(checkpoint, model=self.model)
-        elif load_last:
-            checkpoint = utils.load_checkpoint(
-                os.path.join(logger.logdir, 'checkpoints/last.pth'))
-            utils.unpack_checkpoint(checkpoint, model=self.model)
-
-        labels = []
-        scores = []
-        for batch in loader:
-            x, y = batch['features'], batch['targets']
-            y_hat = model(x)
-            labels.append(y.numpy())
-            scores.append(torch.sigmoid(y_hat).numpy())
-        labels = np.concatenate(labels).squeeze()
-        scores = np.concatenate(scores).squeeze()
-        precision, recall, thresholds = precision_recall_curve(labels, scores, pos_label=1.)
-        thresholds = np.concatenate([thresholds, [1.]])
-        ap = average_precision_score(labels, scores, pos_label=1.)
-        results_dict = {"predictions": {"labels": labels, "scores": scores},
-                        "pr_curve": {"precision": precision,
-                                     "recall": recall,
-                                     "thresholds": thresholds},
-                        "average_precision": ap}
-
-        logger.log_results(results_dict)
-
 
 class MetaClassificationRunner(dl.Runner, LoggingMixin):
 
-    def __init__(self, dataset: SyntheticDataset, use_kde: bool=True,  *args, **kwargs):
+    def __init__(self, dataset: SyntheticDataset, use_kde: bool = True, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.dataset = dataset
         self.use_kde = use_kde
@@ -135,7 +119,7 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
             gradients_z = grad(loss_z, self.model.parameters(), create_graph=True)
 
             # Take one gradient step with gradients obtained on z, and calculate loss on holdout
-            gradients = tuple(gradients_z[i]+gradients_x[i] for i in range(len(gradients_z)))
+            gradients = tuple(gradients_z[i] + gradients_x[i] for i in range(len(gradients_z)))
             logits = self.model(holdout_x, lr=self.hparams["lr_meta"], z_gradients=gradients)
             loss_holdout = F.binary_cross_entropy_with_logits(logits, holdout_y.reshape_as(logits))
             loss_holdout.backward()
@@ -149,7 +133,7 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
                 loss_kde = -self.kde.log_prob(z1)
                 self.batch_metrics.update({"loss_kde": loss_kde})
                 loss_kde.backward()
-                z = z-self.hparams["lr_kde"] * z1.grad
+                z = z - self.hparams["lr_kde"] * z1.grad
 
             # z.grad = z.grad / self.hparams["lr_meta"]
             optimizer_z.step()
@@ -188,7 +172,6 @@ class ClassificationRunner(dl.Runner, LoggingMixin):
         self.meters = {
             "loss_x": metrics.AdditiveValueMetric(compute_on_call=False)
         }
-
 
     def handle_batch(self, batch):
         x, y = batch['features'], batch['targets']

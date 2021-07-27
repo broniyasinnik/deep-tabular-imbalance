@@ -3,13 +3,14 @@ import numpy as np
 from typing import *
 from sklearn.metrics import average_precision_score
 from sklearn.metrics import balanced_accuracy_score
+from sklearn.metrics import precision_recall_curve
 from catalyst import dl, metrics, utils
 
 
 class APMetric(metrics.ICallbackLoaderMetric):
 
     def __init__(self, compute_on_call: bool = True, prefix: str = None,
-                 suffix: str =None):
+                 suffix: str = None):
         super(APMetric, self).__init__(compute_on_call=compute_on_call, prefix=prefix, suffix=suffix)
         self.metric_name = f"{self.prefix}ap{self.suffix}"
         self.scores = []
@@ -34,6 +35,38 @@ class APMetric(metrics.ICallbackLoaderMetric):
         return {self.metric_name: ap}
 
 
+class PRMetric(metrics.ICallbackLoaderMetric):
+    def __init__(self, recall_ths: List = None, compute_on_call: bool = True, prefix: str = None,
+                 suffix: str = None):
+        super(PRMetric, self).__init__(compute_on_call=compute_on_call, prefix=prefix, suffix=suffix)
+        self.metric_name = f"{self.prefix}pr{self.suffix}"
+        self.recall_ths = recall_ths
+        self.scores = []
+        self.targets = []
+
+    def reset(self, num_batches, num_samples) -> None:
+        self.scores = []
+        self.targets = []
+
+    def update(self, scores: torch.Tensor, targets: torch.Tensor) -> None:
+        self.scores.append(scores.cpu().detach())
+        self.targets.append(targets.cpu().detach())
+
+    def compute(self) -> Any:
+        pass
+
+    def compute_key_value(self) -> Dict[str, float]:
+        scores = torch.cat(self.scores)
+        targets = torch.cat(self.targets)
+        precision, recall, thresholds = precision_recall_curve(targets, scores)
+        metrics = {}
+        if self.recall_list is not None:
+            for r in self.recall_list:
+                metrics[f'P@{r}'] = precision[recall >= r][-1]
+
+        return metrics
+
+
 class BalancedAccuracyMetric(metrics.ICallbackBatchMetric, metrics.AdditiveValueMetric):
     def update(self, scores: torch.Tensor, targets: torch.Tensor) -> float:
         scores = scores.detach().to('cpu').numpy()
@@ -50,5 +83,3 @@ class BalancedAccuracyMetric(metrics.ICallbackBatchMetric, metrics.AdditiveValue
     def compute_key_value(self) -> Dict[str, float]:
         mean, std = super().compute()
         return {"accuracy": mean, "accuracy/std": std}
-
-

@@ -17,49 +17,40 @@ from datasets import TableDataset
 from typing import Dict, Any, List, Union
 
 
-class ExperimentLogger:
+def save_predictions(labels: np.array, scores: np.array, logdir: str):
+    df = pd.DataFrame(data={"labels": labels,
+                            "scores": scores})
+    assert os.path.exists(logdir), f"The directory {logdir} doesn't exist"
+    df.to_csv(os.path.join(logdir, "predictions.csv"),
+              index=False)
 
-    def __init__(self, logdir: str, results_folder: str = "results"):
-        self.logdir = logdir
-        os.makedirs(os.path.join(self.logdir, results_folder), exist_ok=True)
-        self.path_to_results = os.path.join(self.logdir, results_folder)
-        self.loggers = {}
 
-    def log_data(self, msg: str):
-        if "data" not in self.loggers.keys():
-            self.loggers["data"] = open(os.path.join(self.logdir, "data.txt"), "a+")
-        self.loggers["data"].write(msg + "\n")
+def save_pr_curve(precision: np.array, recall: np.array, thresholds: np.array, ap: float, logdir: str):
+    df = pd.DataFrame(data={"precision": precision,
+                            "recall": recall,
+                            "thresholds": thresholds})
+    assert os.path.exists(logdir), f"The directory {logdir} doesn't exist"
+    df.to_csv(os.path.join(logdir, "pr.csv"),
+              index=False)
+    plt.figure()
+    plt.step(df['recall'], df['precision'], where='post')
 
-    def log_results(self, results: Dict[str, Any]):
-        os.makedirs(self.path_to_results, exist_ok=True)
-        if "predictions" in results:
-            df = pd.DataFrame(data=results["predictions"])
-            df.to_csv(os.path.join(self.logdir, "results/predictions.csv"),
-                      index=False)
-        if "pr_curve" in results:
-            df = pd.DataFrame(data=results["pr_curve"])
-            df.to_csv(os.path.join(self.logdir, "results/pr.csv"),
-                      index=False)
-            plt.figure()
-            plt.step(df['recall'], df['precision'], where='post')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.ylim([0.0, 1.05])
+    plt.xlim([0.0, 1.0])
+    plt.title('Average precision score: AP={0:0.2f}'.format(ap))
+    plt.savefig(os.path.join(logdir, "pr.png"))
+    plt.close()
 
-            plt.xlabel('Recall')
-            plt.ylabel('Precision')
-            plt.ylim([0.0, 1.05])
-            plt.xlim([0.0, 1.0])
-            plt.title(
-                'Average precision score, micro-averaged over all classes: AP={0:0.2f}'
-                    .format(results["average_precision"]))
-            plt.savefig(os.path.join(self.logdir, "results/pr.png"))
-            plt.close()
-        if "average_precision" in results:
-            with open(os.path.join(self.logdir, "results/metrics.json"), 'w') as f:
-                json.dump({'average_precision': results["average_precision"]}, f, indent=4)
 
-    def close_log(self):
-        for logger in self.loggers.values():
-            logger.flush()
-            logger.close()
+def save_metrics(precision: np.array, recall: np.array, ap: float, logdir: str):
+    metrics = {"AP": [ap]}
+    for r in [0.25, 0.5, 0.75]:
+        metrics[f'P@{int(r*100)}%'] = [precision[recall >= r][-1]]
+    df = pd.DataFrame(data=metrics)
+    df.to_csv(os.path.join(logdir, 'metrics.csv'), index=False)
+
 
 
 class LoggingMode(Enum):
@@ -67,7 +58,7 @@ class LoggingMode(Enum):
     DEBUG = 2
 
 
-class experiment_logger:
+class open_log:
 
     def __init__(self, path: str, name: str, mode: LoggingMode):
         self.mode = mode
@@ -75,40 +66,38 @@ class experiment_logger:
             log_to = os.path.join(path, "debug")
         else:
             log_to = os.path.join(path, name)
-        self.logger = ExperimentLogger(logdir=log_to)
+
+        self.logdir = log_to
+        # self.logger = ExperimentLogger(logdir=log_to)
 
     def __enter__(self):
         if self.mode == LoggingMode.OVERWRITE or \
                 self.mode == LoggingMode.DEBUG:
-            if os.path.exists(self.logger.logdir):
-                shutil.rmtree(self.logger.logdir)
+            if os.path.exists(self.logdir):
+                shutil.rmtree(self.logdir)
 
-        os.makedirs(self.logger.logdir, exist_ok=True)
-        return self.logger
+        os.makedirs(self.logdir, exist_ok=True)
+        return self.logdir
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.logger.close_log()
+        pass
+        # self.logger.close_log()
 
 
 class ExperimentFactory:
-    def __init__(self, train_file: str = None, test_file: str = None,
-                 holdout_file: str = None, smote_file: str = None,
-                 model=None, seed: float = None, hparams: Dict[str, Any] = None):
-        self.train_file = train_file
-        self.test_file = test_file
-        self.smote_file = smote_file
-        self.holdout_file = holdout_file
-        self.hparams = hparams
-        self.seed = seed
+    def __init__(self, config: ConfigDict):
+        self.train_file = config.train_file
+        self.test_file = config.test_file
+        self.valid_file = config.valid_file
+        self.smote_file = config.smote_file if "smote_file" in config else None
+        self.holdout_file = config.holdout_file if "holdout_file" in config else None
+        self.hparams = config.hparams
+        self.seed = config.seed
 
-        self.model = model
-        # self.criterion = {
-        #     "bce": nn.BCEWithLogitsLoss(),
-        #     "bce_weighted": nn.BCEWithLogitsLoss(pos_weight=torch.tensor(self.hparams["ir"]))
-        # }
-        self.criterion = nn.BCEWithLogitsLoss()
-        if model is not None:
-            self.optimizer = torch.optim.Adam(self.model.classifier.parameters(), lr=self.hparams["lr_model"])
+    def get_test_loader(self):
+        test_data = TableDataset.from_npz(self.test_file, train=False)
+        loader = DataLoader(test_data, batch_size=self.hparams['batch_size'], shuffle=False)
+        return loader
 
     def prepare_potential_experiment(self):
         train_data = TableDataset.from_npz([self.train_file, self.holdout_file], train=True)
@@ -120,8 +109,6 @@ class ExperimentFactory:
         e_utils = {
             "name": 'potential',
             "loaders": loaders,
-            "criterion": self.criterion,
-            "optimizer": self.optimizer
         }
         return e_utils
 
@@ -139,8 +126,6 @@ class ExperimentFactory:
         e_utils = {
             "name": 'optuna',
             "loaders": loaders,
-            "criterion": self.criterion,
-            # "optimizer": self.optimizer
         }
         return e_utils
 
@@ -154,74 +139,63 @@ class ExperimentFactory:
         e_utils = {
             "name": 'smote',
             "loaders": loaders,
-            "criterion": self.criterion,
-            "optimizer": self.optimizer
         }
         return e_utils
 
     def prepare_base_experiment(self):
         train_data = TableDataset.from_npz(self.train_file, train=True)
-        test_data = TableDataset.from_npz(self.test_file, train=False)
+        valid_data = TableDataset.from_npz(self.valid_file, train=False)
         ir = (train_data.target == 0).sum() / (train_data.target == 1).sum()
-        self.model.classifier[-1].bias.data.fill_(np.log(1 / ir))
         loaders = {
             "train": DataLoader(train_data, batch_size=self.hparams['batch_size'], shuffle=True),
-            "valid": DataLoader(test_data, batch_size=self.hparams['batch_size'], shuffle=False)
+            "valid": DataLoader(valid_data, batch_size=self.hparams['batch_size'], shuffle=False)
         }
         e_utils = {
             "name": 'base',
             "loaders": loaders,
-            "criterion": self.criterion,
-            "optimizer": self.optimizer
+            "ir": ir
         }
         return e_utils
 
     def prepare_upsampling_experiment(self):
         train_data = TableDataset.from_npz(self.train_file, train=True)
-        test_data = TableDataset.from_npz(self.test_file, train=False)
+        valid_data = TableDataset.from_npz(self.valid_file, train=False)
         upsampling = BalanceClassSampler(train_data.target.squeeze(), mode='upsampling')
         loaders = {
             "train": DataLoader(train_data, batch_size=self.hparams['batch_size'], sampler=upsampling),
-            "valid": DataLoader(test_data, batch_size=self.hparams['batch_size'], shuffle=False)
+            "valid": DataLoader(valid_data, batch_size=self.hparams['batch_size'], shuffle=False)
         }
         e_utils = {
             "name": 'upsampling',
             "loaders": loaders,
-            "criterion": self.criterion,
-            "optimizer": self.optimizer,
         }
         return e_utils
 
     def prepare_downsampling_experiment(self):
         train_data = TableDataset.from_npz(self.train_file, train=True)
-        test_data = TableDataset.from_npz(self.test_file, train=False)
+        valid_data = TableDataset.from_npz(self.valid_file, train=False)
         downsampling = BalanceClassSampler(train_data.target.squeeze(), mode='downsampling')
         loaders = {
             "train": DataLoader(train_data, batch_size=self.hparams['batch_size'], sampler=downsampling),
-            "valid": DataLoader(test_data, batch_size=self.hparams['batch_size'], shuffle=False)
+            "valid": DataLoader(valid_data, batch_size=self.hparams['batch_size'], shuffle=False)
         }
         e_utils = {
             "name": 'downsampling',
             "loaders": loaders,
-            "criterion": self.criterion,
-            "optimizer": self.optimizer
         }
         return e_utils
 
     def prepare_meta_experiment_with_smote(self):
         smote_data = SyntheticDataset(data=self.train_file, synthetic_data=self.smote_file)
-        test_data = TableDataset.from_npz(self.test_file, train=False)
+        valid_data = TableDataset.from_npz(self.valid_file, train=False)
         loaders = {
             "train": DataLoader(smote_data, batch_size=self.hparams['batch_size'], shuffle=True),
-            "valid": DataLoader(test_data, batch_size=self.hparams['batch_size'], shuffle=False),
+            "valid": DataLoader(valid_data, batch_size=self.hparams['batch_size'], shuffle=False),
         }
         e_utils = {
             "name": 'meta',
             "loaders": loaders,
             "train_dataset": smote_data,
-            "criterion": self.criterion,
-            "optimizer": self.optimizer
-
         }
         return e_utils
 
