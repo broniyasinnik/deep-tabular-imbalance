@@ -11,6 +11,7 @@ from ml_collections import ConfigDict
 from matplotlib import pyplot as plt
 from torch.utils.data import DataLoader
 from catalyst.data.sampler import BalanceClassSampler
+from models.net import Net
 from sklearn.model_selection import train_test_split
 from datasets import SyntheticDataset
 from datasets import TableDataset
@@ -44,8 +45,8 @@ def save_pr_curve(precision: np.array, recall: np.array, thresholds: np.array, a
     plt.close()
 
 
-def save_metrics(precision: np.array, recall: np.array, ap: float, logdir: str):
-    metrics = {"AP": [ap]}
+def save_metrics(precision: np.array, recall: np.array, ap: float, auc: float, logdir: str):
+    metrics = {"AP": [ap], "AUC": [auc]}
     for r in [0.25, 0.5, 0.75]:
         metrics[f'P@{int(r*100)}%'] = [precision[recall >= r][-1]]
     df = pd.DataFrame(data=metrics)
@@ -112,13 +113,9 @@ class ExperimentFactory:
         }
         return e_utils
 
-    def prepare_optuna_experiment(self, validation_size: float = 0.2):
-        data = np.load(self.train_file)
-        X, y = data["X"], data["y"]
-        X_train, X_valid, y_train, y_valid = train_test_split(X, y, stratify=y,
-                                                              test_size=validation_size, random_state=self.seed)
-        train_data = TableDataset(features=X_train, targets=y_train)
-        valid_data = TableDataset(features=X_valid, targets=y_valid)
+    def prepare_optuna_experiment(self):
+        train_data = TableDataset.from_npz(self.train_file, train=True)
+        valid_data = TableDataset.from_npz(self.valid_file, train=False)
         loaders = {
             "train": DataLoader(train_data, batch_size=self.hparams['batch_size'], shuffle=True),
             "valid": DataLoader(valid_data, batch_size=self.hparams['batch_size'], shuffle=False)
@@ -131,7 +128,7 @@ class ExperimentFactory:
 
     def prepare_smote_experiment(self):
         train_data = TableDataset.from_npz([self.train_file, self.smote_file], train=True)
-        test_data = TableDataset.from_npz(self.test_file, train=False)
+        test_data = TableDataset.from_npz(self.valid_file, train=False)
         loaders = {
             "train": DataLoader(train_data, batch_size=self.hparams['batch_size'], shuffle=True),
             "valid": DataLoader(test_data, batch_size=self.hparams['batch_size'], shuffle=False)
@@ -199,6 +196,29 @@ class ExperimentFactory:
         }
         return e_utils
 
+
+def prepare_config(experiment_dir: str, config_name: str = 'config.yml') -> ConfigDict:
+    conf_file = os.path.join(experiment_dir, config_name)
+    assert os.path.exists(conf_file), "configuration file doesn't exist"
+    config = load_config(conf_file)
+    return config
+
+def prepare_model(config: ConfigDict):
+    classifier = prepare_mlp_classifier(input_dim=config.model.input_dim, hidden_dims=config["model"]["hiddens"])
+    model = Net(classifier)
+    return model
+
+
+def prepare_optimizer(model, lr_model):
+    optimizer = torch.optim.Adam(model.classifier.parameters(), lr=lr_model)
+    return optimizer
+
+
+def prepare_criterion(pos_weight: float = None):
+    if pos_weight is not None:
+        return nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
+    else:
+        return nn.BCEWithLogitsLoss()
 
 def load_config(conf: str) -> ConfigDict:
     stream = open(conf, 'r')
