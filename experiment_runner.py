@@ -1,5 +1,6 @@
 import os
 import io
+import torch
 import numpy as np
 import contextlib
 import optuna
@@ -12,7 +13,7 @@ from catalyst import dl
 from runners import ClassificationRunner, MetaClassificationRunner, evaluate_model
 from experiment_utils import open_log, LoggingMode
 from experiment_utils import ExperimentFactory
-from experiment_utils import prepare_config, prepare_model, prepare_criterion, prepare_optimizer
+from experiment_utils import prepare_config, prepare_model, prepare_criterion, prepare_optimizer, prepare_scheduler
 
 
 class ExperimentRunner:
@@ -20,14 +21,16 @@ class ExperimentRunner:
         self.experiment_dir = experiment_dir
         self.config = prepare_config(experiment_dir)
         self.model = prepare_model(self.config)
-        self.optimizer = prepare_optimizer(self.model, self.config.hparams.lr_model)
+        self.optimizer = prepare_optimizer(self.model, self.config.hparams.lr_model, self.hparams.weight_decay)
         self.criterion = prepare_criterion()
+        self.scheduler = prepare_scheduler()
+
         self.trial = trial
         self.experiment_factory = ExperimentFactory(self.config)
         if self.trial is not None:
-            self.log_to = f'{self.experiment_dir}/logs'
-        else:
             self.log_to = f'{self.experiment_dir}/optuna_logs'
+        else:
+            self.log_to = f'{self.experiment_dir}/logs'
 
     def _get_callbacks(self, logdir):
         callabacks = OrderedDict({
@@ -38,6 +41,7 @@ class ExperimentRunner:
                                                                                target_key="targets"),
                                          loaders='valid'
                                          ),
+            "scheduler": dl.SchedulerCallback(loader_key='valid', metric_key='ap'),
             "auc": dl.ControlFlowCallback(
                 base_callback=dl.AUCCallback(input_key="logits", target_key="targets"),
                 loaders='valid')
@@ -100,6 +104,7 @@ class ExperimentRunner:
         if baseline == 'smote':
             utils = self.experiment_factory.prepare_smote_experiment()
 
+
         with open_log(self.log_to, name=utils["name"], mode=logging_mode) as logdir:
             runner = ClassificationRunner()
             runner.train(model=self.model,
@@ -112,6 +117,7 @@ class ExperimentRunner:
                          valid_loader="valid",
                          valid_metric="ap",
                          verbose=False,
+                         scheduler=self.scheduler,
                          minimize_valid_metric=False,
                          callbacks=self._get_callbacks(logdir)
                          )
@@ -135,6 +141,7 @@ if __name__ == "__main__":
     # run_keel_experiments()
     exper_dir = f'./Adult/ir100/'
     exper_runner = ExperimentRunner(exper_dir)
-    exper_runner.run_baseline_experiment(baseline="smote")
+    exper_runner.run_baseline_experiment("upsampling")
+    # exper_runner.run_meta_experiment()
     # run_evaluation(dir)
     # run_meta_experiment(conf, use_kde=False, logging_mode=LoggingMode.DEBUG)

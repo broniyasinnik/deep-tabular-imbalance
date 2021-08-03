@@ -48,10 +48,9 @@ def save_pr_curve(precision: np.array, recall: np.array, thresholds: np.array, a
 def save_metrics(precision: np.array, recall: np.array, ap: float, auc: float, logdir: str):
     metrics = {"AP": [ap], "AUC": [auc]}
     for r in [0.25, 0.5, 0.75]:
-        metrics[f'P@{int(r*100)}%'] = [precision[recall >= r][-1]]
+        metrics[f'P@{int(r * 100)}%'] = [precision[recall >= r][-1]]
     df = pd.DataFrame(data=metrics)
     df.to_csv(os.path.join(logdir, 'metrics.csv'), index=False)
-
 
 
 class LoggingMode(Enum):
@@ -203,15 +202,22 @@ def prepare_config(experiment_dir: str, config_name: str = 'config.yml') -> Conf
     config = load_config(conf_file)
     return config
 
+
 def prepare_model(config: ConfigDict):
     classifier = prepare_mlp_classifier(input_dim=config.model.input_dim, hidden_dims=config["model"]["hiddens"])
     model = Net(classifier)
     return model
 
 
-def prepare_optimizer(model, lr_model):
-    optimizer = torch.optim.Adam(model.classifier.parameters(), lr=lr_model)
+def prepare_optimizer(model, lr_model: float, weight_decay: float = 0.):
+    optimizer = torch.optim.Adam(model.classifier.parameters(), lr=lr_model, weight_decay=weight_decay)
     return optimizer
+
+
+def prepare_scheduler(optimizer):
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max',
+                                                           min_lr=1e-5, patience=1)
+    return scheduler
 
 
 def prepare_criterion(pos_weight: float = None):
@@ -219,6 +225,7 @@ def prepare_criterion(pos_weight: float = None):
         return nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
     else:
         return nn.BCEWithLogitsLoss()
+
 
 def load_config(conf: str) -> ConfigDict:
     stream = open(conf, 'r')

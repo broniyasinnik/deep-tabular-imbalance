@@ -15,9 +15,9 @@ def objective_meta(trial):
 
 def objective_base(trial):
     runner = ExperimentRunner(exper_dir, trial=trial)
-    runner.config.model.hiddens = [int(trial.suggest_loguniform("hiddens", 32, 128))]
+    # runner.config.model.hiddens = [int(trial.suggest_loguniform("hiddens", 32, 128))]
     runner.config.hparams.lr_model = trial.suggest_loguniform("lr_model", 1e-3, 1e-1)
-    runner.run_baseline_experiment()
+    runner.run_baseline_experiment(baseline='upsampling')
     score = trial.best_score
     return score
 
@@ -29,7 +29,7 @@ def run_study(obj_func):
             n_startup_trials=1, n_warmup_steps=0, interval_steps=1
         ),
     )
-    study.optimize(objective_base, n_trials=20, timeout=300)
+    study.optimize(obj_func, n_trials=20, timeout=300)
     print(study.best_value, study.best_params)
 
 
