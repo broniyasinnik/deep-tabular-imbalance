@@ -1,6 +1,5 @@
 import os
 import io
-import torch
 import numpy as np
 import contextlib
 import optuna
@@ -13,18 +12,13 @@ from catalyst import dl
 from runners import ClassificationRunner, MetaClassificationRunner, evaluate_model
 from experiment_utils import open_log, LoggingMode
 from experiment_utils import ExperimentFactory
-from experiment_utils import prepare_config, prepare_model, prepare_criterion, prepare_optimizer, prepare_scheduler
+from experiment_utils import prepare_config
 
 
 class ExperimentRunner:
     def __init__(self, experiment_dir: str, trial: optuna.Trial = None):
         self.experiment_dir = experiment_dir
         self.config = prepare_config(experiment_dir)
-        self.model = prepare_model(self.config)
-        self.optimizer = prepare_optimizer(self.model, self.config.hparams.lr_model, self.hparams.weight_decay)
-        self.criterion = prepare_criterion()
-        self.scheduler = prepare_scheduler()
-
         self.trial = trial
         self.experiment_factory = ExperimentFactory(self.config)
         if self.trial is not None:
@@ -32,7 +26,7 @@ class ExperimentRunner:
         else:
             self.log_to = f'{self.experiment_dir}/logs'
 
-    def _get_callbacks(self, logdir):
+    def _get_callbacks(self, logdir, scheduler=None):
         callabacks = OrderedDict({
             "pr": dl.ControlFlowCallback(base_callback=LogPRCurve(os.path.join(logdir, 'pr')),
                                          loaders='valid'),
@@ -41,11 +35,13 @@ class ExperimentRunner:
                                                                                target_key="targets"),
                                          loaders='valid'
                                          ),
-            "scheduler": dl.SchedulerCallback(loader_key='valid', metric_key='ap'),
             "auc": dl.ControlFlowCallback(
                 base_callback=dl.AUCCallback(input_key="logits", target_key="targets"),
                 loaders='valid')
         })
+        if scheduler is not None:
+            callabacks["scheduler"] = dl.SchedulerCallback(loader_key='valid', metric_key='ap')
+
         if self.trial is not None:
             callabacks["optuna"] = dl.OptunaPruningCallback(
                 loader_key="valid", metric_key="ap", minimize=False, trial=self.trial
@@ -67,21 +63,20 @@ class ExperimentRunner:
             with open_log(save_to, name=experiment_name, mode=LoggingMode.OVERWRITE) as logdir:
                 evaluate_model(model=self.model, loader=experiment.get_test_loader(), logdir=logdir)
 
-    def run_meta_experiment(self, use_kde: bool = False, logging_mode: LoggingMode = LoggingMode.OVERWRITE):
-        utils = self.experiment_factory.prepare_meta_experiment_with_smote()
+    def run_meta_experiment(self, logging_mode: LoggingMode = LoggingMode.OVERWRITE):
+        experiment = self.experiment_factory.prepare_meta_experiment_with_smote(name='meta')
         set_global_seed(self.config["seed"])
-        runner = MetaClassificationRunner(dataset=utils["train_dataset"], use_kde=use_kde)
+        synth_data = experiment.loaders["train"].dataset
+        runner = MetaClassificationRunner(dataset=synth_data, use_kde=experiment.hparams.use_kde)
 
-        with open_log(self.log_to, name=utils["name"], mode=logging_mode) as logdir:
+        with open_log(self.log_to, name=experiment.name, mode=logging_mode) as logdir:
             callbacks = self._get_callbacks(logdir)
             callbacks["save_synthetic"] = SaveSyntheticData(log_dir=logdir, save_best=True)
-            runner.train(model=self.model,
-                         criterion=self.criterion,
-                         optimizer=self.optimizer,
-                         loaders=utils["loaders"],
+            runner.train(model=experiment.model,
+                         loaders=experiment.loaders,
                          logdir=logdir,
-                         num_epochs=self.config["num_epochs"],
-                         hparams=self.config["hparams"],
+                         num_epochs=experiment.epochs,
+                         hparams=experiment.hparams,
                          valid_loader="valid",
                          valid_metric="ap",
                          verbose=False,
@@ -89,37 +84,29 @@ class ExperimentRunner:
                          callbacks=callbacks
                          )
 
-    def run_baseline_experiment(self, baseline: str = "base", logging_mode=LoggingMode.OVERWRITE):
+    def run_baseline_experiment(self, name: str = "base", logging_mode=LoggingMode.OVERWRITE):
         set_global_seed(self.config["seed"])
 
-        if baseline == "base":
-            utils = self.experiment_factory.prepare_base_experiment()
-            self.model.classifier[-1].bias.data.fill_(np.log(1 / utils["ir"]))
-        if baseline == "potential":
-            utils = self.experiment_factory.prepare_potential_experiment()
-        if baseline == 'upsampling':
-            utils = self.experiment_factory.prepare_upsampling_experiment()
-        if baseline == 'downsampling':
-            utils = self.experiment_factory.prepare_downsampling_experiment()
-        if baseline == 'smote':
-            utils = self.experiment_factory.prepare_smote_experiment()
+        experiment = self.experiment_factory.prepare_baseline_experiment(name)
+        if name == "base":
+            experiment.model.classifier[-1].bias.data.fill_(np.log(1 / experiment.ir))
 
-
-        with open_log(self.log_to, name=utils["name"], mode=logging_mode) as logdir:
+        with open_log(self.log_to, name=experiment.name, mode=logging_mode) as logdir:
             runner = ClassificationRunner()
-            runner.train(model=self.model,
-                         criterion=self.criterion,
-                         optimizer=self.optimizer,
-                         loaders=utils["loaders"],
+            callbacks = self._get_callbacks(logdir, scheduler=experiment.scheduler)
+            runner.train(model=experiment.model,
+                         criterion=experiment.criterion,
+                         optimizer=experiment.optimizer,
+                         scheduler=experiment.scheduler,
+                         loaders=experiment.loaders,
                          logdir=logdir,
-                         num_epochs=self.config["num_epochs"],
-                         hparams=self.config["hparams"],
+                         num_epochs=experiment.epochs,
+                         # hparams=self.config["hparams"],
                          valid_loader="valid",
                          valid_metric="ap",
                          verbose=False,
-                         scheduler=self.scheduler,
                          minimize_valid_metric=False,
-                         callbacks=self._get_callbacks(logdir)
+                         callbacks=callbacks
                          )
 
 
@@ -137,11 +124,8 @@ def run_keel_experiments():
 
 
 if __name__ == "__main__":
-    # run_evaluation('./Keel1/glass2')
-    # run_keel_experiments()
     exper_dir = f'./Adult/ir100/'
     exper_runner = ExperimentRunner(exper_dir)
-    exper_runner.run_baseline_experiment("upsampling")
+    exper_runner.run_meta_experiment()
     # exper_runner.run_meta_experiment()
     # run_evaluation(dir)
-    # run_meta_experiment(conf, use_kde=False, logging_mode=LoggingMode.DEBUG)

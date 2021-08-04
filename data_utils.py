@@ -114,87 +114,28 @@ def resample_with_smote(train_file: str):
     np.savez(smote_file, X=X_resampled, y=y_resampled)
 
 
+def load_arrays(arrays: Union[str, List[str]]):
+    if isinstance(arrays, str):
+        arrays = [arrays]
 
-class SyntheticDatasetDeprecated(Dataset):
-    def __init__(self, original_dataset: Dataset, complement_dataset: Dataset = None, n_synthetic_minority: int = 0,
-                 n_synthetic_majority: int = 0, scale: float = 0.2):
-        # wrap the dataset
-        self.dataset = original_dataset
-        self.n_synthetic_minority = n_synthetic_minority
-        self.n_synthetic_majority = n_synthetic_majority
-        self.data = None
-        self.target = None
-        self.scale = scale
-        if complement_dataset is not None:
-            self.complement_dataset = complement_dataset
-            self._sample_from_dataset()
-        else:
-            self._sample_synthetic_data()
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, item):
-        batch = {}
-        features_synthetic = self.data[item]
-        targets_synthetic = self.target[item]
-        batch["features"] = features_synthetic
-        batch["ids"] = item
-        batch["targets"] = targets_synthetic
-        return batch
-
-    def _sample_from_dataset(self):
-        original_data = self.dataset.data
-        original_target = self.dataset.target
-        complement_data = self.complement_dataset.data
-        complement_target = self.complement_dataset.target
-        synthetic_data = []
-        synthetic_target = []
-        if self.n_synthetic_minority > 0:
-            minority_samples_ids = np.random.choice(complement_data[complement_target == 1].shape[0],
-                                                    self.n_synthetic_minority)
-            synthetic_minority_data = complement_data[complement_target == 1][minority_samples_ids, :]
-            synthetic_data.append(synthetic_minority_data)
-            synthetic_minority_target = torch.ones((self.n_synthetic_minority, 1))
-            synthetic_target.append(synthetic_minority_target)
-        if self.n_synthetic_majority > 0:
-            majority_samples_ids = np.random.choice(original_data[original_target == 0].shape[0],
-                                                    self.n_synthetic_majority)
-            synthetic_majority_data = original_data[original_target == 0][majority_samples_ids, :]
-            synthetic_majority_target = torch.zeros((self.n_synthetic_majority, 1))
-            synthetic_data.append(synthetic_majority_data)
-            synthetic_target.append(synthetic_majority_target)
-
-        synthetic_data = torch.cat(synthetic_data)
-        synthetic_target = torch.cat(synthetic_target)
-
-        setattr(self, "data", synthetic_data)
-        setattr(self, "target", synthetic_target)
-
-    def _sample_synthetic_data(self):
-        synthetic_data = None
-        synthetic_target = None
-        if self.n_synthetic_minority > 0:
-            noisy_minority = sample_noisy_data(self.n_synthetic_minority,
-                                               data=self.data[(self.target == 1).squeeze()],
-                                               scale=self.scale)
-            synthetic_data = noisy_minority
-            synthetic_target = np.ones((self.n_synthetic_minority, 1))
-        if self.n_synthetic_majority > 0:
-            noisy_majority = sample_noisy_data(self.n_synthetic_majority,
-                                               data=self.data[(self._target == 0).squeeze()],
-                                               scale=self.scale)
-            if synthetic_data is None:
-                synthetic_data = noisy_majority
-                synthetic_target = np.zeros((self.noisy_majority_samples, 1))
+    features = None
+    targets = None
+    if isinstance(arrays, list):
+        for arr in arrays:
+            assert os.path.exists(arr), f"Array in file {arr} doesn't exists"
+            data = np.load(arr)
+            X, y = data["X"].astype(np.float32), data["y"].astype(np.float32).squeeze()
+            if features is not None:
+                features = np.concatenate([features, X])
             else:
-                synthetic_data = np.concatenate([self.data, noisy_majority])
-                synthetic_target = np.concatenate([self.target,
-                                                   np.zeros((self.n_synthetic_majority, 1))])
+                features = X
 
-        setattr(self, "data", synthetic_data)
-        setattr(self, "target", synthetic_target)
+            if targets is not None:
+                targets = np.concatenate([targets, y])
+            else:
+                targets = y
 
+    return features, targets
 
 def create_imbalanced_dataset(x: Union[np.array, pd.DataFrame], y: np.array, ir: int, pos_label: int = 1, random_state: int = 42):
     np.random.seed(random_state)

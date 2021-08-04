@@ -104,10 +104,8 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
 
             # Update model on real points
             px = self.model(x)
-            self.optimizer.zero_grad()
             loss = F.binary_cross_entropy_with_logits(px, y.reshape_as(px))
             gradients_x = grad(loss, self.model.parameters())
-            # loss.backward(retain_graph=True)
 
             # Create optimizer for synthetic points
             z = synth_x.clone().detach().requires_grad_(True)
@@ -136,12 +134,10 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
                 loss_kde.backward()
                 z = z - self.hparams["lr_kde"] * z1.grad
 
-            # z.grad = z.grad / self.hparams["lr_meta"]
             optimizer_z.step()
 
             # Save the update for model with the gradients obtained on z
             self.model._gradient_step(lr=self.hparams["lr_meta"], gradients=gradients)
-            # self.optimizer.step()
 
             # Update
             ids = index[is_synthetic]
@@ -150,7 +146,7 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
         elif self.is_valid_loader:
             x, y = batch['features'], batch['targets']
             y_hat = self.model(x)
-            loss_x = self.criterion(y_hat, y.reshape_as(y_hat))
+            loss_x = F.binary_cross_entropy_with_logits(y_hat, y.reshape_as(y_hat))
             self.batch_metrics.update({
                 "loss": loss_x
             })

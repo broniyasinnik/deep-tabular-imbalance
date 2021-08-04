@@ -6,7 +6,7 @@ from scipy.stats import rv_discrete
 import numpy as np
 import random
 from typing import List, Union
-from data_utils import TableConfig, sample_noisy_data
+from data_utils import load_arrays, sample_noisy_data
 from catalyst.data.sampler import BalanceClassSampler
 from sklearn.datasets import make_moons, make_circles
 from torch.utils.data import Dataset
@@ -165,26 +165,27 @@ class TableDataset(Dataset):
 
     @classmethod
     def from_npz(cls, path_to_npz: Union[str, List[str]] = None, train: bool = True):
-        features = None
-        targets = None
-        if isinstance(path_to_npz, str):
-            path_to_npz = [path_to_npz]
-
-        if isinstance(path_to_npz, list):
-            for path in path_to_npz:
-                assert os.path.exists(path), f"Training file {path} doesn't exists"
-                data = np.load(path)
-                X, y = torch.tensor(data["X"], dtype=torch.float32), \
-                  torch.tensor(data["y"].squeeze(), dtype=torch.float32)
-                if features is not None:
-                    features = torch.cat((features, X))
-                else:
-                    features = X
-
-                if targets is not None:
-                    targets = torch.cat((targets, y))
-                else:
-                    targets = y
+        features, targets = load_arrays(path_to_npz)
+        # features = None
+        # targets = None
+        # if isinstance(path_to_npz, str):
+        #     path_to_npz = [path_to_npz]
+        #
+        # if isinstance(path_to_npz, list):
+        #     for path in path_to_npz:
+        #         assert os.path.exists(path), f"Training file {path} doesn't exists"
+        #         data = np.load(path)
+        #         X, y = torch.tensor(data["X"], dtype=torch.float32), \
+        #           torch.tensor(data["y"].squeeze(), dtype=torch.float32)
+        #         if features is not None:
+        #             features = torch.cat((features, X))
+        #         else:
+        #             features = X
+        #
+        #         if targets is not None:
+        #             targets = torch.cat((targets, y))
+        #         else:
+        #             targets = y
 
         self = cls(features, targets, train=train)
         return self
@@ -216,19 +217,13 @@ class TableDataset(Dataset):
 
 
 class SyntheticDataset(Dataset):
-    def __init__(self, data: str, synthetic_data: str):
-        assert os.path.exists(data), "data path doesn't exist"
-        assert os.path.exists(synthetic_data), "smote data path doesn't exist"
+    def __init__(self, real_data: Union[str, List[str]], synthetic_data: Union[str, List[str]]):
 
         # Features of the real data
-        data_arr = np.load(data)
-        self._features_real = data_arr["X"].astype(np.float32)
-        self._targets_real = data_arr["y"].squeeze().astype(np.float32)
+        self._features_real, self._targets_real = load_arrays(real_data)
 
         # Features of the synthetic Data
-        synthetic_arr = np.load(synthetic_data)
-        self._features_synthetic = synthetic_arr["X"].astype(np.float32)
-        self._targets_synthetic = synthetic_arr["y"].squeeze().astype(np.float32)
+        self._features_synthetic, self._targets_synthetic = load_arrays(synthetic_data)
 
         self.features = np.concatenate([self._features_real, self._features_synthetic])
         self.targets = np.concatenate([self._targets_real, self._targets_synthetic])
@@ -254,11 +249,6 @@ class SyntheticDataset(Dataset):
 
     def get_synthetic_dataset(self):
         return {'X': self.features[self.size_real:], 'y': self.targets[self.size_real:]}
-
-    # def split_real_synthetic(self):
-    #     real = TableDataset(self.features[:self.size_real].copy(), self._targets_real[:self.size_real].copy())
-    #     synthetic = TableDataset(self.features[self.size_real:].copy(), self.targets[self.size_real:].copy())
-    #     return real, synthetic
 
     def __getitem__(self, item):
         holdout_x = self._features_real[self.holdout_index[item]]
