@@ -3,7 +3,11 @@ import io
 import numpy as np
 import contextlib
 import optuna
+from absl import logging
+from absl import flags
+from absl import app
 from catalyst import utils
+from visualization_utils import visualize_projection
 from collections import OrderedDict
 from models.metrics import APMetric
 from catalyst.utils.misc import set_global_seed
@@ -13,6 +17,12 @@ from runners import ClassificationRunner, MetaClassificationRunner, evaluate_mod
 from experiment_utils import open_log, LoggingMode
 from experiment_utils import ExperimentFactory
 from experiment_utils import prepare_config
+
+FLAGS = flags.FLAGS
+flags.DEFINE_string('exper_dir', './Adult/ir100/', help="Directory with experiment configuration")
+flags.DEFINE_string('runs_dir', 'logs', help="Name of directory to save run logs")
+flags.DEFINE_string('result_dir', 'results', help="Name of directory to save the results")
+flags.DEFINE_string('visualization_dir', 'visualization', help="Name of directory to save visualization results")
 
 
 class ExperimentRunner:
@@ -47,6 +57,16 @@ class ExperimentRunner:
                 loader_key="valid", metric_key="ap", minimize=False, trial=self.trial
             )
         return callabacks
+
+    def run_visualization(self):
+        if 'visualization' not in self.config:
+            logging.info("Visualization configuration not found")
+            return
+        vis_conf = self.config.visualization
+        save_to = os.path.join(FLAGS.exper_dir, FLAGS.visualization_dir)
+        os.makedirs(save_to, exist_ok=True)
+        for proj in vis_conf:
+            visualize_projection(name=proj, save_to=save_to, **vis_conf[proj])
 
     def run_evaluation(self):
         log_dir = os.path.join(self.experiment_dir, 'logs')
@@ -123,9 +143,15 @@ def run_keel_experiments():
         # run_meta_experiment(c_path)
 
 
-if __name__ == "__main__":
+def main(argv):
     exper_dir = f'./Adult/ir100/'
     exper_runner = ExperimentRunner(exper_dir)
-    exper_runner.run_meta_experiment()
+    exper_runner.run_visualization()
+    return 0
+
+
+if __name__ == "__main__":
+    app.run(main)
+    # exper_runner.run_meta_experiment()
     # exper_runner.run_meta_experiment()
     # run_evaluation(dir)
