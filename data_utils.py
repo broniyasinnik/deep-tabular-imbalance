@@ -137,7 +137,9 @@ def load_arrays(arrays: Union[str, List[str]]):
 
     return features, targets
 
-def create_imbalanced_dataset(x: Union[np.array, pd.DataFrame], y: np.array, ir: int, pos_label: int = 1, random_state: int = 42):
+
+def create_imbalanced_dataset(x: Union[np.array, pd.DataFrame], y: np.array, ir: int, pos_label: int = 1,
+                              random_state: int = 42):
     np.random.seed(random_state)
     minority_ids, = np.where(y.squeeze() == pos_label)
     majority_ids, = np.where(y.squeeze() != pos_label)

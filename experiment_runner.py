@@ -16,7 +16,7 @@ from catalyst import dl
 from runners import ClassificationRunner, MetaClassificationRunner, evaluate_model
 from experiment_utils import open_log, LoggingMode
 from experiment_utils import ExperimentFactory
-from experiment_utils import prepare_config
+from experiment_utils import get_config, get_model, get_test_loader, aggregate_results
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('exper_dir', './Adult/ir100/', help="Directory with experiment configuration")
@@ -26,15 +26,18 @@ flags.DEFINE_string('visualization_dir', 'visualization', help="Name of director
 
 
 class ExperimentRunner:
-    def __init__(self, experiment_dir: str, trial: optuna.Trial = None):
+    def __init__(self, experiment_dir: str, runs_folder: str = "logs",
+                 results_folder: str = "results", visualization_folder: str = "visualization",
+                 trial: optuna.Trial = None):
         self.experiment_dir = experiment_dir
-        self.config = prepare_config(experiment_dir)
+        self.runs_folder = runs_folder
+        self.results_folder = results_folder
+        self.visualization_folder = visualization_folder
+        self.config = get_config(experiment_dir)
         self.trial = trial
         self.experiment_factory = ExperimentFactory(self.config)
         if self.trial is not None:
-            self.log_to = f'{self.experiment_dir}/optuna_logs'
-        else:
-            self.log_to = f'{self.experiment_dir}/logs'
+            self.runs_folder = 'optuna'
 
     def _get_callbacks(self, logdir, scheduler=None):
         callabacks = OrderedDict({
@@ -69,34 +72,53 @@ class ExperimentRunner:
             visualize_projection(name=proj, save_to=save_to, **vis_conf[proj])
 
     def run_evaluation(self):
-        log_dir = os.path.join(self.experiment_dir, 'logs')
-        assert os.path.exists(log_dir), f"No available experiments in {dir}"
-        for experiment_name in os.listdir(log_dir):
-            path_to_checkpoint = os.path.join(log_dir, experiment_name, "checkpoints", "best.pth")
+
+        runs_dir = os.path.join(self.experiment_dir, self.runs_folder)
+        assert os.path.exists(runs_dir), f"No available experiments in {dir}"
+
+        # Default run evaluation on all experiment runs
+        experiments = os.listdir(runs_dir)
+
+        # Run evaluation on specified targets in config
+        if 'evaluation' in self.config:
+            experiments = self.config.evaluation.targets
+
+        results = dict()
+        save_to = os.path.join(self.experiment_dir, self.results_folder)
+        model = get_model(self.config.model)
+        test_loader = get_test_loader(self.config.test_file)
+
+        for experiment_name in experiments:
+            path_to_checkpoint = os.path.join(runs_dir, experiment_name, "checkpoints", "best.pth")
             checkpoint = utils.load_checkpoint(path=path_to_checkpoint)
             utils.unpack_checkpoint(
                 checkpoint=checkpoint,
-                model=self.model,
+                model=model,
             )
-            experiment = ExperimentFactory(self.config)
-            save_to = os.path.join(self.experiment_dir, "results")
             with open_log(save_to, name=experiment_name, mode=LoggingMode.OVERWRITE) as logdir:
-                evaluate_model(model=self.model, loader=experiment.get_test_loader(), logdir=logdir)
+                labels, scores = evaluate_model(model=model, loader=test_loader, logdir=logdir)
+                results[experiment_name] = {
+                    'labels': labels,
+                    'scores': scores
+                }
+
+        with open_log(save_to, name='all', mode=LoggingMode.OVERWRITE) as logdir:
+            aggregate_results(results, metrics=self.config.evaluation.metrics, logdir=logdir)
 
     def run_meta_experiment(self, logging_mode: LoggingMode = LoggingMode.OVERWRITE):
         experiment = self.experiment_factory.prepare_meta_experiment_with_smote(name='meta')
         set_global_seed(self.config["seed"])
         synth_data = experiment.loaders["train"].dataset
         runner = MetaClassificationRunner(dataset=synth_data, use_kde=experiment.hparams.use_kde)
-
-        with open_log(self.log_to, name=experiment.name, mode=logging_mode) as logdir:
+        log_to = os.path.join(self.experiment_dir, self.runs_folder)
+        with open_log(log_to, name=experiment.name, mode=logging_mode) as logdir:
             callbacks = self._get_callbacks(logdir)
             callbacks["save_synthetic"] = SaveSyntheticData(log_dir=logdir, save_best=True)
             runner.train(model=experiment.model,
                          loaders=experiment.loaders,
                          logdir=logdir,
                          num_epochs=experiment.epochs,
-                         hparams=experiment.hparams,
+                         hparams=self.config.experiments['meta'].to_dict(),
                          valid_loader="valid",
                          valid_metric="ap",
                          verbose=False,
@@ -111,7 +133,8 @@ class ExperimentRunner:
         if name == "base":
             experiment.model.classifier[-1].bias.data.fill_(np.log(1 / experiment.ir))
 
-        with open_log(self.log_to, name=experiment.name, mode=logging_mode) as logdir:
+        log_to = os.path.join(self.experiment_dir, self.runs_folder)
+        with open_log(log_to, name=experiment.name, mode=logging_mode) as logdir:
             runner = ClassificationRunner()
             callbacks = self._get_callbacks(logdir, scheduler=experiment.scheduler)
             runner.train(model=experiment.model,
@@ -121,7 +144,7 @@ class ExperimentRunner:
                          loaders=experiment.loaders,
                          logdir=logdir,
                          num_epochs=experiment.epochs,
-                         # hparams=self.config["hparams"],
+                         hparams=self.config.experiments[name].to_dict(),
                          valid_loader="valid",
                          valid_metric="ap",
                          verbose=False,
@@ -146,12 +169,9 @@ def run_keel_experiments():
 def main(argv):
     exper_dir = f'./Adult/ir100/'
     exper_runner = ExperimentRunner(exper_dir)
-    exper_runner.run_visualization()
+    exper_runner.run_evaluation()
     return 0
 
 
 if __name__ == "__main__":
     app.run(main)
-    # exper_runner.run_meta_experiment()
-    # exper_runner.run_meta_experiment()
-    # run_evaluation(dir)

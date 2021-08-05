@@ -1,4 +1,3 @@
-import os
 import torch
 import numpy as np
 import catalyst.dl as dl
@@ -9,10 +8,8 @@ from torch.utils.data import DataLoader
 from torch.autograd import grad
 from catalyst import metrics
 from datasets import SyntheticDataset
-from catalyst import utils
-from sklearn.metrics import precision_recall_curve, average_precision_score, roc_auc_score
 from typing import Mapping, Any, Optional, Dict
-from experiment_utils import save_predictions, save_pr_curve, save_metrics
+from experiment_utils import save_predictions
 
 
 @torch.no_grad()
@@ -26,14 +23,8 @@ def evaluate_model(model, loader: DataLoader, logdir: str):
         scores.append(torch.sigmoid(y_hat).numpy())
     labels = np.concatenate(labels).squeeze()
     scores = np.concatenate(scores).squeeze()
-    precision, recall, thresholds = precision_recall_curve(labels, scores, pos_label=1.)
-    thresholds = np.concatenate([thresholds, [1.]])
-    ap = average_precision_score(labels, scores, pos_label=1.)
-    auc = roc_auc_score(labels, scores)
     save_predictions(labels, scores, logdir)
-    save_pr_curve(precision, recall, thresholds, ap, logdir)
-    save_metrics(precision=precision, recall=recall,
-                 ap=ap, auc=auc, logdir=logdir)
+    return labels, scores
 
 
 class LoggingMixin:
