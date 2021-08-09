@@ -21,15 +21,15 @@ from datasets import SyntheticDataset
 from datasets import TableDataset
 from typing import Dict, Any, List, Union
 
-COLORS: List[str] = ['aqua', 'darkorange', 'cornflowerblue']
+COLORS: List[str] = ['aqua', 'darkorange', 'cornflowerblue', 'red', 'black']
 
 
 def save_predictions(labels: np.array, scores: np.array, logdir: str):
     df = pd.DataFrame(data={"labels": labels,
-                            "scores": scores})
+                            "scores": scores}, columns=['labels', 'scores'])
     assert os.path.exists(logdir), f"The directory {logdir} doesn't exist"
     df.to_csv(os.path.join(logdir, "predictions.csv"),
-              index=False)
+              index=False, header=True)
 
 
 def save_pr_curve(labels: np.array, scores: np.array, logdir: str):
@@ -92,7 +92,7 @@ def save_metrics_table(results: Dict[str, Any], save_ap: bool, save_auc: bool, p
             metrics[f'P@{int(r * 100)}%'].append(precision[recall >= r][-1])
 
     df = pd.DataFrame(data=metrics, index=results.keys())
-    df.to_csv(os.path.join(logdir, 'metrics.csv'), index=False)
+    df.to_csv(os.path.join(logdir, 'metrics.csv'), index=True)
 
 
 def aggregate_results(results: Dict[str, Any], metrics: ConfigDict, logdir: str):

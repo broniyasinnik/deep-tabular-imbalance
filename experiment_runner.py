@@ -74,7 +74,7 @@ class ExperimentRunner:
     def run_evaluation(self):
 
         runs_dir = os.path.join(self.experiment_dir, self.runs_folder)
-        assert os.path.exists(runs_dir), f"No available experiments in {dir}"
+        assert os.path.exists(runs_dir), f"No available experiments in {runs_dir}"
 
         # Default run evaluation on all experiment runs
         experiments = os.listdir(runs_dir)
@@ -109,7 +109,8 @@ class ExperimentRunner:
         experiment = self.experiment_factory.prepare_meta_experiment_with_smote(name='meta')
         set_global_seed(self.config["seed"])
         synth_data = experiment.loaders["train"].dataset
-        runner = MetaClassificationRunner(dataset=synth_data, use_kde=experiment.hparams.use_kde)
+        runner = MetaClassificationRunner(dataset=synth_data, use_kde=experiment.hparams.use_kde,
+                                          use_armijo=experiment.hparams.use_armijo)
         log_to = os.path.join(self.experiment_dir, self.runs_folder)
         with open_log(log_to, name=experiment.name, mode=logging_mode) as logdir:
             callbacks = self._get_callbacks(logdir)
@@ -118,7 +119,7 @@ class ExperimentRunner:
                          loaders=experiment.loaders,
                          logdir=logdir,
                          num_epochs=experiment.epochs,
-                         hparams=self.config.experiments['meta'].to_dict(),
+                         hparams=experiment.hparams,
                          valid_loader="valid",
                          valid_metric="ap",
                          verbose=False,
@@ -169,6 +170,7 @@ def run_keel_experiments():
 def main(argv):
     exper_dir = f'./Adult/ir100/'
     exper_runner = ExperimentRunner(exper_dir)
+    # exper_runner.run_meta_experiment()
     exper_runner.run_evaluation()
     return 0
 

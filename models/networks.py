@@ -1,16 +1,10 @@
 import torch
 import torch.nn as nn
-from torch import Tensor
-import torch.nn.functional as F
 import numpy as np
-from torch import distributions
-from copy import deepcopy
-from qpth.qp import QPFunction
 from typing import List, Tuple
-
-import torch
 from torch.distributions import MultivariateNormal, Normal
 from torch.distributions.distribution import Distribution
+
 
 class GaussianKDE(Distribution):
     def __init__(self, X, bw):
@@ -54,7 +48,7 @@ class GaussianKDE(Distribution):
         if X == None:
             X = self.X
         log_probs = torch.log(
-            (self.bw**(-self.dims) *
+            (self.bw ** (-self.dims) *
              torch.exp(self.mvn.log_prob(
                  (X.unsqueeze(1) - Y) / self.bw))).sum(dim=0) / self.n)
 
@@ -87,6 +81,7 @@ class GaussianKDE(Distribution):
 
         return log_prob
 
+
 class MLP(nn.Module):
     def __init__(self, in_features: int, out_features: int, hidden_layers: List[int]):
         super(MLP, self).__init__()
@@ -103,60 +98,6 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.mlp(x)
 
-class CentersDistance(nn.Module):
-    def __init__(self, dim=-1):
-        super(CentersDistance, self).__init__()
-        self._dim = dim
-
-    def forward(self, inputs, centers):
-        logits = -torch.sum((centers.unsqueeze(1) - inputs)**2, dim=self._dim)
-        # if `keepdim=True` up there, remove unsqueeze here
-        return logits
-
-class SVDDLayer(nn.Module):
-    def __init__(self, dim=1, eps=1e-6):
-        super(SVDDLayer, self).__init__()
-        self._dim = dim
-        self._eps = eps
-
-    def forward(self, inputs):
-        shot = inputs.shape[1]
-
-        kernel_matrices = torch.bmm(inputs, inputs.transpose(1, 2))
-        kernel_matrices += self._eps * torch.eye(shot)
-        kernel_diags = torch.diagonal(kernel_matrices, dim1=-2, dim2=-1)
-        Q = 2 * kernel_matrices
-        p = -kernel_diags
-        A = torch.ones(1, shot)
-        b = torch.ones(1)
-        G = -torch.eye(shot)
-        h = torch.zeros(shot)
-        alphas = QPFunction(verbose=True)(
-            Q,
-            p,
-            G.detach(),
-            h.detach(),
-            A.detach(),
-            b.detach(),
-        )
-
-        alphas = alphas.unsqueeze(-1)
-        centers = torch.sum(alphas * inputs, dim=self._dim)
-        # `keepdim=True` here to avoid unsqueezing in `CentersDistance`, which
-        # could be used for vanilla protonet?
-
-        return centers
-
-
-class PrototypeLayer(nn.Module):
-    def __init__(self, dim=1):
-        super(PrototypeLayer, self).__init__()
-        self._dim = dim
-        # TODO: does this work for vanilla prototypical networks?
-
-    def forward(self, inputs):
-        prototypes = torch.mean(inputs, dim=self._dim)
-        return prototypes
 
 class TabularModel(nn.Module):
     """Basic model for tabular data."""
@@ -242,281 +183,3 @@ class Generator(nn.Module):
         assert labels.size().numel() == batch_size
         random_latent_vectors = torch.cat([latent_vectors, labels], dim=1)
         return random_latent_vectors, labels
-
-
-class CirclesHyperNetwork(nn.Module):
-
-    def __init__(self, classifier):
-        super(CirclesHyperNetwork, self).__init__()
-        # H1
-        self.hyper_layer1 = nn.Sequential(nn.Linear(2, 64), nn.Tanh())  # 2 x 32
-        self.hyper_bias1 = nn.Sequential(nn.Linear(2, 32), nn.Tanh())
-        # Layer1
-        self.layer1 = classifier[0]  # nn.Linear(2, 32)
-        # H2
-        self.hyper_layer2 = nn.Sequential(nn.Linear(2, 1024), nn.Tanh())  # 32 x 32
-        self.hyper_bias2 = nn.Sequential(nn.Linear(2, 32), nn.Tanh())
-        # Layer2
-        self.layer2 = classifier[2]  # nn.Linear(32, 32)
-        # H3
-        self.hyper_layer3 = nn.Sequential(nn.Linear(2, 32), nn.Tanh())  # 32 x 1
-        self.hyper_bias3 = nn.Sequential(nn.Linear(2, 1))
-        # Layer3
-        self.layer3 = classifier[4]  # nn.Linear(32, 1)
-
-        # net activation
-        self.activation = nn.ReLU()
-
-        # initialize the values for each network layer
-        self.layer1_weights_new = self.layer1.weight.clone().detach()
-        self.layer1_bias_new = self.layer1.bias.clone().detach()
-        self.layer2_weights_new = self.layer2.weight.clone().detach()
-        self.layer2_bias_new = self.layer2.bias.clone().detach()
-        self.layer3_weights_new = self.layer3.weight.clone().detach()
-        self.layer3_bias_new = self.layer3.bias.clone().detach()
-
-        # initialize synthetic points
-        self._generate_synthetic_points()
-
-    def _update_weights(self):
-        self.layer1.load_state_dict({'weight': self.layer1_weights_new,
-                                     'bias': self.layer1_bias_new})
-        self.layer2.load_state_dict({'weight': self.layer2_weights_new,
-                                     'bias': self.layer2_bias_new})
-        self.layer3.load_state_dict({'weight': self.layer3_weights_new,
-                                     'bias': self.layer3_bias_new})
-
-    def _generate_synthetic_points(self, samples=100):
-        x_syn = torch.randn((samples, 2), requires_grad=True)
-        y_syn = torch.empty((samples, 1)).random_(2)
-        self.x_syn = x_syn
-        self.y_syn = y_syn
-
-    def weight_regularization_loss(self):
-        loss1 = F.mse_loss(self.layer1_weights_new, self.layer1.weight) + \
-                F.mse_loss(self.layer1_bias_new, self.layer1.bias)
-        loss2 = F.mse_loss(self.layer2_weights_new, self.layer2.weight) + \
-                F.mse_loss(self.layer2_bias_new, self.layer2.bias)
-        loss3 = F.mse_loss(self.layer3_weights_new, self.layer3.weight) + \
-                F.mse_loss(self.layer3_bias_new, self.layer3.bias)
-        loss = loss1 + loss2 + loss3
-        return loss
-
-    def hyper_forward(self, input: Tensor):
-        self.layer1_weights_new = self.hyper_layer1(input).mean(0).view(32, 2)
-        self.layer1_bias_new = self.hyper_bias1(input).mean(0).view(32)
-        self.layer2_weights_new = self.hyper_layer2(input).mean(0).view(32, 32)
-        self.layer2_bias_new = self.hyper_bias2(input).mean(0).view(32)
-        self.layer3_weights_new = self.hyper_layer3(input).mean(0).view(1, 32)
-        self.layer3_bias_new = self.hyper_bias3(input).mean(0).view(1)
-
-    def forward(self, input):
-        layer1_out = F.linear(input, self.layer1_weights_new, self.layer1_bias_new)
-        layer1_out = self.activation(layer1_out)
-
-        layer2_out = F.linear(layer1_out, self.layer2_weights_new, self.layer2_bias_new)
-        layer2_out = self.activation(layer2_out)
-
-        layer3_out = F.linear(layer2_out, self.layer3_weights_new, self.layer3_bias_new)
-
-        return layer3_out
-
-
-# class HyperNetwork(nn.Module):
-#
-#     def __init__(self, classifier):
-#         super(HyperNetwork, self).__init__()
-#         # H1
-#         self.hyper_layer1 = nn.Sequential(nn.Linear(2, 64), nn.Tanh())  # 2 x 32
-#         self.hyper_bias1 = nn.Sequential(nn.Linear(2, 32), nn.Tanh())
-#         # Layer1
-#         self.layer1 = classifier[0]  # nn.Linear(2, 32)
-#         # H2
-#         self.hyper_layer2 = nn.Sequential(nn.Linear(2, 1024), nn.Tanh())  # 32 x 32
-#         self.hyper_bias2 = nn.Sequential(nn.Linear(2, 32), nn.Tanh())
-#         # Layer2
-#         self.layer2 = classifier[2]  # nn.Linear(32, 32)
-#         # H3
-#         self.hyper_layer3 = nn.Sequential(nn.Linear(2, 32), nn.Tanh())  # 32 x 1
-#         self.hyper_bias3 = nn.Sequential(nn.Linear(2, 1))
-#         # Layer3
-#         self.layer3 = classifier[4]  # nn.Linear(32, 1)
-#
-#         # net activation
-#         self.activation = nn.ReLU()
-#         self.net = classifier
-#
-#         # Module dictionary
-#         self.hypernetwork = nn.ModuleDict(
-#             {"hyper_layer1": self.hyper_layer1,
-#              "hyper_bias1": self.hyper_bias1,
-#              "hyper_layer2": self.hyper_layer2,
-#              "hyper_bias2": self.hyper_bias2,
-#              "hyper_layer3": self.hyper_layer3,
-#              "hyper_bias3": self.hyper_bias3
-#              }
-#         )
-#         # update values for each network layer
-#         self.layer1_weights_update = self.layer1.weight.clone().detach()
-#         self.layer1_bias_update = self.layer1.bias.clone().detach()
-#         self.layer2_weights_update = self.layer2.weight.clone().detach()
-#         self.layer2_bias_update = self.layer2.bias.clone().detach()
-#         self.layer3_weights_update = self.layer3.weight.clone().detach()
-#         self.layer3_bias_update = self.layer3.bias.clone().detach()
-#
-#     def update_weights(self):
-#         self.layer1.load_state_dict({'weight': self.layer1_weights_update,
-#                                      'bias': self.layer1_bias_update})
-#         self.layer2.load_state_dict({'weight': self.layer2_weights_update,
-#                                      'bias': self.layer2_bias_update})
-#         self.layer3.load_state_dict({'weight': self.layer3_weights_update,
-#                                      'bias': self.layer3_bias_update})
-#
-#     def forward(self, input, syntetic, lr=1e-3):
-#         self.layer1_weights_update = self.layer1.weight + lr * self.hyper_layer1(syntetic).mean(0).view(32, 2)
-#         self.layer1_bias_update = self.layer1.bias + lr * self.hyper_bias1(syntetic).mean(0).view(32)
-#         self.layer2_weights_update = self.layer2.weight + lr * self.hyper_layer2(syntetic).mean(0).view(32, 32)
-#         self.layer2_bias_update = self.layer2.bias + lr * self.hyper_bias2(syntetic).mean(0).view(32)
-#         self.layer3_weights_update = self.layer3.weight + lr * self.hyper_layer3(syntetic).mean(0).view(1, 32)
-#         self.layer3_bias_update = self.layer3.bias + lr * self.hyper_bias3(syntetic).mean(0).view(1)
-#
-#         layer1_out = F.linear(input, self.layer1_weights_update, self.layer1_bias_update)
-#         layer1_out = self.activation(layer1_out)
-#
-#         layer2_out = F.linear(layer1_out, self.layer2_weights_update, self.layer2_bias_update)
-#         layer2_out = self.activation(layer2_out)
-#
-#         layer3_out = F.linear(layer2_out, self.layer3_weights_update, self.layer3_bias_update)
-#
-#         return layer3_out
-
-
-# class HyperNetwork(nn.Module):
-#
-#     def __init__(self, classifier):
-#         super(HyperNetwork, self).__init__()
-#         # H1
-#         self.hyper_layer1 = nn.Sequential(nn.Linear(1, 3520), nn.Tanh())  # 55 x 64
-#         self.hyper_bias1 = nn.Sequential(nn.Linear(1, 64), nn.Tanh())
-#         # Layer1
-#         self.layer1 = classifier[0]  # nn.Linear(55, 64)
-#         self.batch_norm1 = classifier[2]  # nn.BatchNorm1d(64)
-#         # H2
-#         self.hyper_layer2 = nn.Sequential(nn.Linear(1, 1024), nn.Tanh())  # 64 x 16
-#         self.hyper_bias2 = nn.Sequential(nn.Linear(1, 16), nn.Tanh())
-#         # Layer2
-#         self.layer2 = classifier[3]  # nn.Linear(64, 16)
-#         self.batch_norm2 = classifier[5]  # nn.BatchNorm1d(16)
-#         # H3
-#         self.hyper_layer3 = nn.Sequential(nn.Linear(1, 16), nn.Tanh())  # 16 x 1
-#         self.hyper_bias3 = nn.Sequential(nn.Linear(1, 1))
-#         # Layer3
-#         self.layer3 = classifier[6]  # nn.Linear(16, 1)
-#
-#         # net activation
-#         self.activation = nn.ReLU()
-#         self.net = classifier
-#
-#         # Module dictionary
-#         self.hypernetwork = nn.ModuleDict(
-#             {"hyper_layer1": self.hyper_layer1,
-#              "hyper_bias1": self.hyper_bias1,
-#              "hyper_layer2": self.hyper_layer2,
-#              "hyper_bias2": self.hyper_bias2,
-#              "hyper_layer3": self.hyper_layer3,
-#              "hyper_bias3": self.hyper_bias3
-#              }
-#         )
-#         # update values for each network layer
-#         self.layer1_weights_update = self.layer1.weight.clone().detach()
-#         self.layer1_bias_update = self.layer1.bias.clone().detach()
-#         self.layer2_weights_update = self.layer2.weight.clone().detach()
-#         self.layer2_bias_update = self.layer2.bias.clone().detach()
-#         self.layer3_weights_update = self.layer3.weight.clone().detach()
-#         self.layer3_bias_update = self.layer3.bias.clone().detach()
-#
-#     def update_weights(self):
-#         self.layer1.load_state_dict({'weight': self.layer1_weights_update,
-#                                      'bias': self.layer1_bias_update})
-#         self.layer2.load_state_dict({'weight': self.layer2_weights_update,
-#                                      'bias': self.layer2_bias_update})
-#         self.layer3.load_state_dict({'weight': self.layer3_weights_update,
-#                                      'bias': self.layer3_bias_update})
-#
-#     def forward(self, input, label, lr=1e-3):
-#         self.layer1_weights_update = self.layer1.weight + lr * self.hyper_layer1(label).view(64, 55)
-#         self.layer1_bias_update = self.layer1.bias + lr * self.hyper_bias1(label).view(64)
-#         self.layer2_weights_update = self.layer2.weight + lr * self.hyper_layer2(label).view(16, 64)
-#         self.layer2_bias_update = self.layer2.bias + lr * self.hyper_bias2(label).view(16)
-#         self.layer3_weights_update = self.layer3.weight + lr * self.hyper_layer3(label).view(1, 16)
-#         self.layer3_bias_update = self.layer3.bias + lr * self.hyper_bias3(label).view(1)
-#
-#         layer1_out = F.linear(input, self.layer1_weights_update, self.layer1_bias_update)
-#         layer1_out = self.activation(layer1_out)
-#         layer1_out = self.batch_norm1(layer1_out)
-#
-#         layer2_out = F.linear(layer1_out, self.layer2_weights_update, self.layer2_bias_update)
-#         layer2_out = self.activation(layer2_out)
-#         layer2_out = self.batch_norm2(layer2_out)
-#
-#         layer3_out = F.linear(layer2_out, self.layer3_weights_update, self.layer3_bias_update)
-#
-#         return layer3_out
-
-
-class MetricModel(nn.Module):
-    def __init__(self):
-        super(MetricModel, self).__init__()
-        self.model = nn.Sequential(nn.Linear(512, 40),
-                                   nn.Tanh(),
-                                   nn.Linear(40, 10), nn.Tanh(),
-                                   nn.Linear(10, 2))
-
-    def forward(self, x):
-        return self.model(x)
-
-
-class RealNVP(nn.Module):
-
-    def __init__(self, nets, nett, mask, prior):
-        super(RealNVP, self).__init__()
-        nets = lambda: nn.Sequential(nn.Linear(2, 256), nn.LeakyReLU(), nn.Linear(256, 256), nn.LeakyReLU(),
-                                     nn.Linear(256, 2),
-                                     nn.Tanh())
-        nett = lambda: nn.Sequential(nn.Linear(2, 256), nn.LeakyReLU(), nn.Linear(256, 256), nn.LeakyReLU(),
-                                     nn.Linear(256, 2))
-        masks = torch.from_numpy(np.array([[0, 1], [1, 0]] * 3).astype(np.float32))
-        prior = distributions.MultivariateNormal(torch.zeros(2), torch.eye(2))
-        self.prior = prior
-        self.mask = nn.Parameter(mask, requires_grad=False)
-        self.t = torch.nn.ModuleList([nett() for _ in range(len(masks))])
-        self.s = torch.nn.ModuleList([nets() for _ in range(len(masks))])
-
-    def g(self, z):
-        x = z
-        for i in range(len(self.t)):
-            x_ = x * self.mask[i]
-            s = self.s[i](x_) * (1 - self.mask[i])
-            t = self.t[i](x_) * (1 - self.mask[i])
-            x = x_ + (1 - self.mask[i]) * (x * torch.exp(s) + t)
-        return x
-
-    def f(self, x):
-        log_det_J, z = x.new_zeros(x.shape[0]), x
-        for i in reversed(range(len(self.t))):
-            z_ = self.mask[i] * z
-            s = self.s[i](z_) * (1 - self.mask[i])
-            t = self.t[i](z_) * (1 - self.mask[i])
-            z = (1 - self.mask[i]) * (z - t) * torch.exp(-s) + z_
-            log_det_J -= s.sum(dim=1)
-        return z, log_det_J
-
-    def log_prob(self, x):
-        z, log_p = self.f(x)
-        return self.prior.log_prob(z) + log_p
-
-    def sample(self, batchsize):
-        z = self.prior.sample((batchsize, 1))
-        log_p = self.prior.log_prob(z)
-        x = self.g(z)
-        return x

@@ -7,11 +7,73 @@ valid_file: &valid_file "./data/adult_ir100.val.npz"
 test_file: &test_file "./data/adult_ir100.tst.npz"
 smote_file: &smote_file "./data/adult_ir100.smt.npz"
 
+
+visualization:
+  PCA:
+    params:
+      n_components: 2
+    fit:
+      - *train_file
+      - *valid_file
+    transform:
+      - *test_file
+  TSNE:
+    params:
+      n_components: 2
+      verbose: 1
+      init: pca
+    fit:
+      - *train_file
+      - *valid_file
+      - *test_file
+
 model:
   input_dim: 14
   hiddens: [128, 16]
 
+evaluation:
+  targets:
+    - base
+    - upsampling
+    - downsampling
+    - meta
+    - smote
+  metrics:
+    - pr
+    - roc
+    - auc
+    - ap
+    - p@ 0.75, 0.5 , 0.4
+
 experiments:
+
+  potential:
+    epochs: 200
+    batch_size: 128
+    datasets:
+      train:
+        - *train_file
+        - *holdout_file
+      valid:
+        - *valid_file
+    optimizer:
+      _target_: Adam
+      lr: 1.0e-2
+      weight_decay: 5.0e-5
+
+  base:
+    epochs: 200
+    batch_size: 128
+    datasets:
+      train:
+        - *train_file
+      valid:
+        - *valid_file
+    optimizer:
+      _target_: Adam
+      lr: 1.0e-2
+      weight_decay: 5.0e-5
+
   upsampling:
     epochs: 200
     batch_size: 128
@@ -27,13 +89,9 @@ experiments:
       _target_: Adam
       lr: 1.0e-2
       weight_decay: 5.0e-5
-    scheduler:
-      _target_: MultiStepLR
-      milestones: [ 2 ]
-      gamma: 0.3
 
   downsampling:
-    num_epochs: 200
+    epochs: 200
     batch_size: 128
     datasets:
       train:
@@ -47,17 +105,10 @@ experiments:
       _target_: Adam
       lr: 1.0e-2
       weight_decay: 5.0e-5
-    scheduler:
-      _target_: ReduceLROnPlateau
-      mode: max
-      min_lr: 1.0e-5
-      patience: 1
 
   smote:
-    num_epochs: 200
+    epochs: 10
     batch_size: 128
-    lr_model: 1.0e-2
-    weight_decay: 5.0e-5
     datasets:
       train:
         - *train_file
@@ -66,16 +117,24 @@ experiments:
         - *valid_file
     optimizer:
       _target_: Adam
-    scheduler:
-      _target_: MultiStepLR
-      milestones: [ 2 ]
-      gamma: 0.3
+      lr: 1.0e-2
+      weight_decay: 5.0e-5
+
   meta:
-    num_epochs: 200
+    epochs: 200
     batch_size: 128
-    lr_model: 1.0e-2
-    weight_decay: 5.0e-5
-    lr_z: 1.0e+3
-    lr_meta: 5.e-2
-    lr_kde: 10
+    datasets:
+      train:
+        - *train_file
+      synthetic_train:
+        - *smote_file
+      valid:
+        - *valid_file
+    hparams:
+      use_kde: False
+      use_armijo: True
+      lr_z: 1.0e+5
+      lr_meta: 5.e-1
+      lr_kde: 10
+
 

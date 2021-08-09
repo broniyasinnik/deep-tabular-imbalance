@@ -1,24 +1,24 @@
-import torch
 import numpy as np
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
 class Net(nn.Module):
 
-    def __init__(self, classifier: nn.Module=None):
+    def __init__(self, classifier: nn.Module = None):
         super(Net, self).__init__()
         self.classifier = classifier
         # self.classifier = nn.Sequential(nn.Linear(2, 32), nn.ReLU(),
         #                                 nn.Linear(32, 32), nn.ReLU(),
         #                                 nn.Linear(32, 1))
 
-    def _gradient_step(self, lr, gradients):
+    def gradient_step_(self, lr, gradients):
         i = 0
         for layer in self.classifier:
             if isinstance(layer, nn.Linear):
                 layer.weight.data = layer.weight.data - lr * gradients[i]
-                layer.bias.data = layer.bias.data - lr * gradients[i+1]
+                layer.bias.data = layer.bias.data - lr * gradients[i + 1]
                 i += 2
 
         # self.classifier[0].weight.data = self.classifier[0].weight.data - lr * gradients[0]
@@ -28,15 +28,15 @@ class Net(nn.Module):
         # self.classifier[4].weight.data = self.classifier[4].weight.data - lr * gradients[4]
         # self.classifier[4].bias.data = self.classifier[4].bias.data - lr * gradients[5]
 
-    def forward(self, x, lr: float = 0.1, z_gradients: torch.Tensor = None):
-        if z_gradients:
+    def forward(self, x, lr: float = 0.1, gradients: torch.Tensor = None):
+        if gradients:
             linear_layers = []
             for layer in self.classifier:
                 if isinstance(layer, nn.Linear):
                     linear_layers.extend([layer.weight, layer.bias])
 
             updated_layers = []
-            for layer_params, z_grads in zip(linear_layers, z_gradients):
+            for layer_params, z_grads in zip(linear_layers, gradients):
                 update_layer = layer_params - lr * z_grads
                 updated_layers.append(update_layer)
 
@@ -66,3 +66,5 @@ class Net(nn.Module):
             # return out2
         else:
             return self.classifier(x)
+
+
