@@ -21,7 +21,7 @@ from datasets import SyntheticDataset
 from datasets import TableDataset
 from typing import Dict, Any, List, Union
 
-COLORS: List[str] = ['aqua', 'darkorange', 'cornflowerblue', 'red', 'black']
+COLORS: List[str] = ['aqua', 'darkorange', 'cornflowerblue', 'red', 'black', 'orange', 'blue']
 
 
 def save_predictions(labels: np.array, scores: np.array, logdir: str):

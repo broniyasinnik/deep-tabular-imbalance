@@ -105,8 +105,8 @@ class ExperimentRunner:
         with open_log(save_to, name='all', mode=LoggingMode.OVERWRITE) as logdir:
             aggregate_results(results, metrics=self.config.evaluation.metrics, logdir=logdir)
 
-    def run_meta_experiment(self, logging_mode: LoggingMode = LoggingMode.OVERWRITE):
-        experiment = self.experiment_factory.prepare_meta_experiment_with_smote(name='meta')
+    def run_meta_experiment(self, name: str = 'meta', logging_mode: LoggingMode = LoggingMode.OVERWRITE):
+        experiment = self.experiment_factory.prepare_meta_experiment_with_smote(name=name)
         set_global_seed(self.config["seed"])
         synth_data = experiment.loaders["train"].dataset
         runner = MetaClassificationRunner(dataset=synth_data, use_kde=experiment.hparams.use_kde,
@@ -170,7 +170,8 @@ def run_keel_experiments():
 def main(argv):
     exper_dir = f'./Adult/ir100/'
     exper_runner = ExperimentRunner(exper_dir)
-    # exper_runner.run_meta_experiment()
+    # exper_runner.run_baseline_experiment(name='potential')
+    # exper_runner.run_meta_experiment(name="meta_armijo_1")
     exper_runner.run_evaluation()
     return 0
 

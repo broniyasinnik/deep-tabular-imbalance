@@ -132,9 +132,8 @@ experiments:
         - *valid_file
     hparams:
       use_kde: False
-      use_armijo: True
+      use_armijo: False
       lr_z: 1.0e+5
       lr_meta: 5.e-1
       lr_kde: 10
-
 

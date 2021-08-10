@@ -113,6 +113,7 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
             # Calculate loss on the synthetic batch
             with torch.no_grad():
                 logits = self.model(batch["features"])
+                logits.clamp(min=-10, max=10)
                 loss = F.binary_cross_entropy_with_logits(logits, batch["target"].reshape_as(logits))
                 self.batch_metrics.update({"loss": loss})
 
@@ -130,6 +131,7 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
             # Take one gradient step with gradients obtained on z, and calculate loss on holdout
             gradients = tuple(gradients_z[i] + gradients_x[i] for i in range(len(gradients_z)))
             logits = self.model(holdout_x, lr=self.hparams["lr_meta"], gradients=gradients)
+            logits.clamp(min=-10, max=10)
             loss_holdout = F.binary_cross_entropy_with_logits(logits, holdout_y.reshape_as(logits))
             loss_holdout.backward()
             self.batch_metrics.update({
@@ -155,6 +157,7 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
                                      lr_meta=self.hparams['lr_meta'],
                                      lr=self.hparams['lr_z']
                                      )
+                    self.batch_metrics.update(lr_z=float(lr))
                 else:
                     lr = self.hparams["lr_z"]
                 sgd([z], z.grad, lr=lr, **sgd_params)
@@ -170,6 +173,7 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
         elif self.is_valid_loader:
             x, y = batch['features'], batch['targets']
             y_hat = self.model(x)
+            y_hat.clamp(min=-10, max=10)
             loss_x = F.binary_cross_entropy_with_logits(y_hat, y.reshape_as(y_hat))
             self.batch_metrics.update({
                 "loss": loss_x
