@@ -50,7 +50,10 @@ class ExperimentRunner:
                                          ),
             "auc": dl.ControlFlowCallback(
                 base_callback=dl.AUCCallback(input_key="logits", target_key="targets"),
-                loaders='valid')
+                loaders='valid'),
+
+            "earlystopping": dl.EarlyStoppingCallback(patience=5, loader_key='valid', metric_key='ap',
+                                                      minimize=False)
         })
         if scheduler is not None:
             callabacks["scheduler"] = dl.SchedulerCallback(loader_key='valid', metric_key='ap')
@@ -168,10 +171,10 @@ def run_keel_experiments():
 
 
 def main(argv):
-    exper_dir = f'./Adult/ir100/'
+    exper_dir = f'./Adult/ir200/'
     exper_runner = ExperimentRunner(exper_dir)
     # exper_runner.run_baseline_experiment(name='potential')
-    # exper_runner.run_meta_experiment(name="meta_armijo_1")
+    # exper_runner.run_meta_experiment(name="meta")
     exper_runner.run_evaluation()
     return 0
 
