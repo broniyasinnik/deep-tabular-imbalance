@@ -52,7 +52,7 @@ class ExperimentRunner:
                 base_callback=dl.AUCCallback(input_key="logits", target_key="targets"),
                 loaders='valid'),
 
-            "earlystopping": dl.EarlyStoppingCallback(patience=5, loader_key='valid', metric_key='ap',
+            "earlystopping": dl.EarlyStoppingCallback(patience=20, loader_key='valid', metric_key='ap',
                                                       minimize=False)
         })
         if scheduler is not None:
@@ -109,7 +109,7 @@ class ExperimentRunner:
             aggregate_results(results, metrics=self.config.evaluation.metrics, logdir=logdir)
 
     def run_meta_experiment(self, name: str = 'meta', logging_mode: LoggingMode = LoggingMode.OVERWRITE):
-        experiment = self.experiment_factory.prepare_meta_experiment_with_smote(name=name)
+        experiment = self.experiment_factory.prepare_meta_experiment(name=name)
         set_global_seed(self.config["seed"])
         synth_data = experiment.loaders["train"].dataset
         runner = MetaClassificationRunner(dataset=synth_data, use_kde=experiment.hparams.use_kde,
@@ -174,8 +174,8 @@ def main(argv):
     exper_dir = f'./Adult/ir200/'
     exper_runner = ExperimentRunner(exper_dir)
     # exper_runner.run_baseline_experiment(name='potential')
-    # exper_runner.run_meta_experiment(name="meta")
-    exper_runner.run_evaluation()
+    exper_runner.run_meta_experiment(name="meta")
+    # exper_runner.run_evaluation()
     return 0
 
 

@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import catalyst
 import torch.nn as nn
+from torch.utils.data import Dataset
 from collections import defaultdict
 from enum import Enum
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ from models.net import Net
 from datasets import SyntheticDataset
 from datasets import TableDataset
 from typing import Dict, Any, List, Union
+from catalyst.typing import Sampler
 
 COLORS: List[str] = ['aqua', 'darkorange', 'cornflowerblue', 'red', 'black', 'orange', 'blue']
 
@@ -169,17 +171,8 @@ class ExperimentFactory:
         train_data = TableDataset.from_npz(conf_experiment.datasets.train, train=True)
         valid_data = TableDataset.from_npz(conf_experiment.datasets.valid, train=False)
         ir = (train_data.target == 0).sum() / (train_data.target == 1).sum()
-        if 'sampler' in conf_experiment:
-            sampler = get_sampler(train_data.target.squeeze(), conf_experiment.sampler)
-            loaders = {
-                "train": DataLoader(train_data, batch_size=conf_experiment.batch_size, sampler=sampler),
-                "valid": DataLoader(valid_data, batch_size=conf_experiment.batch_size, shuffle=False)
-            }
-        else:
-            loaders = {
-                "train": DataLoader(train_data, batch_size=conf_experiment.batch_size, shuffle=True),
-                "valid": DataLoader(valid_data, batch_size=conf_experiment.batch_size, shuffle=False)
-            }
+
+        loaders = get_train_valid_loaders(train_data, valid_data, params=conf_experiment)
         model = get_model(self.config.model)
         optimizer = get_optimizer(model, params=conf_experiment.optimizer)
         scheduler = get_scheduler(optimizer,
@@ -190,15 +183,13 @@ class ExperimentFactory:
                                 epochs=conf_experiment.epochs)
         return experiment
 
-    def prepare_meta_experiment_with_smote(self, name: str):
+    def prepare_meta_experiment(self, name: str):
         conf_experiment = self.config.experiments[name]
-        smote_data = SyntheticDataset(real_data=conf_experiment.datasets.train,
-                                      synthetic_data=conf_experiment.datasets.synthetic_train)
+        train_data = SyntheticDataset(real_data=conf_experiment.datasets.train,
+                                      synthetic_data=conf_experiment.datasets.synthetic_train,
+                                      valid_data=conf_experiment.datasets.valid)
         valid_data = TableDataset.from_npz(conf_experiment.datasets.valid, train=False)
-        loaders = {
-            "train": DataLoader(smote_data, batch_size=conf_experiment.batch_size, shuffle=True),
-            "valid": DataLoader(valid_data, batch_size=conf_experiment.batch_size, shuffle=False),
-        }
+        loaders = get_train_valid_loaders(train_data, valid_data, params=conf_experiment)
         model = get_model(self.config.model)
         hparams = conf_experiment.hparams
         experiment = Experiment(name=name, loaders=loaders, model=model,
@@ -212,6 +203,16 @@ def get_test_loader(test_file: str, batch_size: int = 128):
     return loader
 
 
+def get_train_valid_loaders(train_data: Dataset, valid_data: Dataset, params: ConfigDict):
+    sampler = get_sampler(train_data.target.squeeze(), params.sampler) if 'sampler' in params else None
+    shuffle = True if sampler is None else False
+    loaders = {
+        "train": DataLoader(train_data, batch_size=params.batch_size, shuffle=shuffle, sampler=sampler),
+        "valid": DataLoader(valid_data, batch_size=params.batch_size, shuffle=False),
+    }
+    return loaders
+
+
 def get_config(experiment_dir: str, config_name: str = 'config.yml') -> ConfigDict:
     conf_file = os.path.join(experiment_dir, config_name)
     assert os.path.exists(conf_file), "configuration file doesn't exist"
@@ -219,20 +220,20 @@ def get_config(experiment_dir: str, config_name: str = 'config.yml') -> ConfigDi
     return config
 
 
-def get_model(params: ConfigDict):
+def get_model(params: ConfigDict) -> Model:
     classifier = prepare_mlp_classifier(input_dim=params.input_dim, hidden_dims=params.hiddens)
     model = Net(classifier)
     return model
 
 
-def get_optimizer(model, params: ConfigDict):
+def get_optimizer(model, params: ConfigDict) -> Optimizer:
     opt_params = params.to_dict()
     _target = opt_params.pop('_target_')
     optimizer = getattr(torch.optim, _target)(model.classifier.parameters(), **opt_params)
     return optimizer
 
 
-def get_scheduler(optimizer, params: ConfigDict):
+def get_scheduler(optimizer, params: ConfigDict) -> Scheduler:
     sch_params = params.to_dict()
     _target = sch_params.pop('_target_')
     scheduler = getattr(torch.optim.lr_scheduler, _target)(optimizer, **sch_params)
@@ -240,14 +241,14 @@ def get_scheduler(optimizer, params: ConfigDict):
     return scheduler
 
 
-def get_sampler(labels, params: ConfigDict):
+def get_sampler(labels, params: ConfigDict) -> Sampler:
     samp_params = params.to_dict()
     _target = samp_params.pop('_target_')
     sampler = getattr(catalyst.data.sampler, _target)(labels=labels, **samp_params)
     return sampler
 
 
-def get_criterion(pos_weight: float = None):
+def get_criterion(pos_weight: float = None) -> Criterion:
     if pos_weight is not None:
         return nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
     else:

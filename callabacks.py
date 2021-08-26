@@ -63,7 +63,7 @@ class SaveSyntheticData(Callback):
     def on_epoch_end(self, runner: "IRunner") -> None:
         if self.save_best:
             dataset = runner.get_datasets(stage=runner.stage_key)["train"]
-            synthetic = dataset.get_synthetic_dataset()
+            synthetic = dataset.synthetic_dataset
             epoch_metric = runner.epoch_metrics["valid"][runner._valid_metric]
             if self.best_valid_metric is None:
                 self.best_valid_metric = epoch_metric

@@ -50,7 +50,8 @@ class TableDataset(Dataset):
 
 
 class SyntheticDataset(Dataset):
-    def __init__(self, real_data: Union[str, List[str]], synthetic_data: Union[str, List[str]]):
+    def __init__(self, real_data: Union[str, List[str]], synthetic_data: Union[str, List[str]],
+                 valid_data: Union[str, List[str]]):
 
         # Features of the real data
         self._features_real, self._targets_real = load_arrays(real_data)
@@ -58,13 +59,17 @@ class SyntheticDataset(Dataset):
         # Features of the synthetic Data
         self._features_synthetic, self._targets_synthetic = load_arrays(synthetic_data)
 
+        # Features of the holdout data
+        self._features_holdout, self._targets_holdout = load_arrays(valid_data)
+
         self.features = np.concatenate([self._features_real, self._features_synthetic])
-        self.targets = np.concatenate([self._targets_real, self._targets_synthetic])
+        self.target = np.concatenate([self._targets_real, self._targets_synthetic])
+
         self.size_real = len(self._targets_real)
-        self.holdout_index = list(BalanceClassSampler(self._targets_real, mode="upsampling"))
+        self.size_holdout = len(self._targets_holdout)
 
     def __len__(self):
-        return len(self.holdout_index)
+        return len(self.target)
 
     def __repr__(self):
         descr = f''' {self.__class__.__name__} shape {tuple(self.features.shape)}
@@ -74,20 +79,19 @@ class SyntheticDataset(Dataset):
 
         return descr
 
-    def shuffle_holdout_index(self):
-        random.shuffle(self.holdout_index)
+    @property
+    def real_dataset(self):
+        return {'X': self.features[:self.size_real], 'y': self.target[:self.size_real]}
 
-    def get_real_dataset(self):
-        return {'X': self.features[:self.size_real], 'y': self.targets[:self.size_real]}
-
-    def get_synthetic_dataset(self):
-        return {'X': self.features[self.size_real:], 'y': self.targets[self.size_real:]}
+    @property
+    def synthetic_dataset(self):
+        return {'X': self.features[self.size_real:], 'y': self.target[self.size_real:]}
 
     def __getitem__(self, item):
-        holdout_x = self._features_real[self.holdout_index[item]]
-        holdout_y = self._targets_real[self.holdout_index[item]]
+        holdout_x = self._features_holdout[item % self.size_holdout]
+        holdout_y = self._targets_real[item % self.size_holdout]
         x = self.features[item]
-        y = self.targets[item]
+        y = self.target[item]
         data_item = {
             "holdout_features": holdout_x,
             "holdout_target": holdout_y,

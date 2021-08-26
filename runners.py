@@ -7,6 +7,7 @@ from models.networks import GaussianKDE
 from torch.utils.data import DataLoader
 from torch.autograd import grad
 from torch.optim._functional import sgd
+from itertools import product, repeat
 from catalyst import metrics
 from datasets import SyntheticDataset
 from typing import Mapping, Any, Optional, Dict
@@ -30,14 +31,14 @@ def evaluate_model(model, loader: DataLoader, logdir: str):
 
 
 @torch.no_grad()
-def armijo_step(model: Net, z: torch.Tensor, z_grad: torch.Tensor,
-                x: torch.Tensor, y: torch.Tensor,
-                lr_meta: float, lr: float, k: int = 10):
+def armijo_step_z(model: Net, z: torch.Tensor, z_grad: torch.Tensor,
+                  x: torch.Tensor, y: torch.Tensor,
+                  lr_meta: float, lr: float, k: int = 10):
     losses = torch.zeros(k, dtype=torch.float32)
     lr_arr = torch.zeros(k, dtype=torch.float32)
     for i in range(k):
         lr_i = lr / (2 ** i)
-        test_z = z-lr_i*z_grad
+        test_z = z - lr_i * z_grad
         with torch.enable_grad():
             pz = model(test_z)
             loss_z = F.binary_cross_entropy_with_logits(pz, torch.ones_like(pz))
@@ -47,6 +48,20 @@ def armijo_step(model: Net, z: torch.Tensor, z_grad: torch.Tensor,
         losses[i] = loss_holdout
         lr_arr[i] = lr_i
     return lr_arr[torch.argmin(losses)]
+
+
+@torch.no_grad()
+def armijo_step_model(model: Net, gradients: torch.Tensor, lr_meta: float, x: torch.Tensor, y: torch.Tensor):
+    k = 2
+    lr = torch.tensor([lr_meta / (2 ** i) for i in range(k)], dtype=torch.float32)
+    best_lr = None
+    best_loss = 1e9
+    for lr_lst in list(product(*repeat(lr, k))):
+        logits = model(x, lr_lst, gradients)
+        loss = F.binary_cross_entropy_with_logits(logits, y.reshape_as(logits))
+        if loss < best_loss:
+            best = best_loss
+            best_lr = best_lr
 
 
 class LoggingMixin:
@@ -92,9 +107,6 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
             self.loader_metrics[key] = self.meters[key].compute()[0]
         super().on_loader_end(runner)
 
-    def on_epoch_end(self, runner: "IRunner"):
-        runner.loaders["train"].dataset.shuffle_holdout_index()
-
     def get_datasets(self, stage: str) -> "OrderedDict[str, Dataset]":
         if stage == "train":
             return OrderedDict({"train": self.dataset})
@@ -117,7 +129,7 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
                 loss = F.binary_cross_entropy_with_logits(logits, batch["target"].reshape_as(logits))
                 self.batch_metrics.update({"loss": loss})
 
-            # Update model on real points
+            # Calculate model on real points
             px = self.model(x)
             loss = F.binary_cross_entropy_with_logits(px, y.reshape_as(px))
             gradients_x = grad(loss, self.model.parameters())
@@ -153,10 +165,8 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
                                   dampening=0.,
                                   nesterov=False)
                 if self.use_armijo:
-                    lr = armijo_step(self.model, z, z_grad=z.grad, x=holdout_x, y=holdout_y,
-                                     lr_meta=self.hparams['lr_meta'],
-                                     lr=self.hparams['lr_z']
-                                     )
+                    lr = armijo_step_model(self.model, param_grad=gradients,
+                                           lr_meta=self.hparams['lr_meta'])
                     self.batch_metrics.update(lr_z=float(lr))
                 else:
                     lr = self.hparams["lr_z"]
