@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader
 from torch.autograd import grad
 from torch.optim._functional import sgd
 from itertools import product, repeat
+from copy import deepcopy
 from catalyst import metrics
 from datasets import SyntheticDataset
 from typing import Mapping, Any, Optional, Dict
@@ -51,17 +52,28 @@ def armijo_step_z(model: Net, z: torch.Tensor, z_grad: torch.Tensor,
 
 
 @torch.no_grad()
-def armijo_step_model(model: Net, gradients: torch.Tensor, lr_meta: float, x: torch.Tensor, y: torch.Tensor):
-    k = 2
-    lr = torch.tensor([lr_meta / (2 ** i) for i in range(k)], dtype=torch.float32)
-    best_lr = None
-    best_loss = 1e9
-    for lr_lst in list(product(*repeat(lr, k))):
-        logits = model(x, lr_lst, gradients)
-        loss = F.binary_cross_entropy_with_logits(logits, y.reshape_as(logits))
-        if loss < best_loss:
-            best = best_loss
-            best_lr = best_lr
+def armijo_step_model(model: Net, gradients: torch.Tensor, steps: int, lr_meta: float, x: torch.Tensor, y: torch.Tensor):
+    num_coords = len(gradients)
+    lr = torch.tensor([lr_meta / (2 ** i) for i in range(steps)], dtype=torch.float32)
+    lr_total = torch.zeros(num_coords)
+    for i in range(num_coords):
+        e_i = torch.eye(num_coords)[i, :]
+        loss = 1e9 * torch.ones(steps)
+        for j in range(steps):
+            model_i = deepcopy(model)
+            lr_i = e_i * lr[j]
+            model_i.gradient_step_(lr_i, gradients)
+            logits = model_i(x)
+            loss[j] = F.binary_cross_entropy_with_logits(logits, y.reshape_as(logits))
+        lr_total[i] = lr[torch.argmin(loss)]
+
+    return lr_total
+
+
+    # for lr_lst in list(product(*repeat(lr, k))):
+    #     if loss < best_loss:
+    #         best = best_loss
+    #         best_lr = best_lr
 
 
 class LoggingMixin:

@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from typing import Tuple
 
 class Net(nn.Module):
 
@@ -13,12 +13,16 @@ class Net(nn.Module):
         #                                 nn.Linear(32, 32), nn.ReLU(),
         #                                 nn.Linear(32, 1))
 
-    def gradient_step_(self, lr, gradients):
+    def gradient_step_(self, lr: torch.Tensor, gradients: Tuple[torch.Tensor]):
+        if lr.size() == 1:
+            dtheta = lr * gradients
+        else:
+            dtheta = [lr[j]*gradients[j] for j in range(len(lr))]
         i = 0
         for layer in self.classifier:
             if isinstance(layer, nn.Linear):
-                layer.weight.data = layer.weight.data - lr * gradients[i]
-                layer.bias.data = layer.bias.data - lr * gradients[i + 1]
+                layer.weight.data = layer.weight.data - dtheta[i]
+                layer.bias.data = layer.bias.data - dtheta[i + 1]
                 i += 2
 
         # self.classifier[0].weight.data = self.classifier[0].weight.data - lr * gradients[0]
@@ -28,7 +32,7 @@ class Net(nn.Module):
         # self.classifier[4].weight.data = self.classifier[4].weight.data - lr * gradients[4]
         # self.classifier[4].bias.data = self.classifier[4].bias.data - lr * gradients[5]
 
-    def forward(self, x, lr: float = 0.1, gradients: torch.Tensor = None):
+    def forward(self, x, lr: torch.Tensor = None, gradients: torch.Tensor = None):
         if gradients:
             linear_layers = []
             for layer in self.classifier:
@@ -36,7 +40,11 @@ class Net(nn.Module):
                     linear_layers.extend([layer.weight, layer.bias])
 
             updated_layers = []
-            for layer_params, z_grads in zip(linear_layers, gradients):
+            if lr.size() == 1:
+                dtheta = lr * gradients
+            else:
+                dtheta = [lr[j] * gradients[j] for j in range(len(lr))]
+            for layer_params, z_grads in zip(linear_layers, dtheta):
                 update_layer = layer_params - lr * z_grads
                 updated_layers.append(update_layer)
 
