@@ -1,0 +1,4 @@
+outs:
+- md5: 575d2c9fa39d87b595cbfc6afbb4bb03
+  size: 5487210
+  path: adult_clean.csv
