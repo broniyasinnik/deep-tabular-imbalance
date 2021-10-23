@@ -1,34 +1,50 @@
-import os
-import io
-import numpy as np
 import contextlib
-import optuna
-from absl import logging
-from absl import flags
-from absl import app
-from catalyst import utils
-from visualization_utils import visualize_projection
+import io
+import os
 from collections import OrderedDict
-from models.metrics import APMetric
+
+import numpy as np
+import optuna
+from absl import app, flags, logging
+from catalyst import dl, utils
 from catalyst.utils.misc import set_global_seed
+
 from callabacks import LogPRCurve, SaveSyntheticData
-from catalyst import dl
-from runners import ClassificationRunner, MetaClassificationRunner, evaluate_model
-from experiment_utils import open_log, LoggingMode
-from experiment_utils import ExperimentFactory
-from experiment_utils import get_config, get_model, get_test_loader, aggregate_results
+from experiment_utils import (
+    ExperimentFactory,
+    LoggingMode,
+    aggregate_results,
+    get_config,
+    get_model,
+    get_test_loader,
+    open_log,
+)
+from models.metrics import APMetric
+from runners import (
+    ClassificationRunner,
+    MetaClassificationRunner,
+    evaluate_model,
+)
+from visualization_utils import visualize_projection
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string('exper_dir', './Adult/ir100/', help="Directory with experiment configuration")
-flags.DEFINE_string('runs_dir', 'logs', help="Name of directory to save run logs")
-flags.DEFINE_string('result_dir', 'results', help="Name of directory to save the results")
-flags.DEFINE_string('visualization_dir', 'visualization', help="Name of directory to save visualization results")
+flags.DEFINE_string("exper_dir", "./Adult/ir100/", help="Directory with experiment configuration")
+flags.DEFINE_string("runs_dir", "logs", help="Name of directory to save run logs")
+flags.DEFINE_string("result_dir", "results", help="Name of directory to save the results")
+flags.DEFINE_string(
+    "visualization_dir", "visualization", help="Name of directory to save visualization results"
+)
 
 
 class ExperimentRunner:
-    def __init__(self, experiment_dir: str, runs_folder: str = "logs",
-                 results_folder: str = "results", visualization_folder: str = "visualization",
-                 trial: optuna.Trial = None):
+    def __init__(
+        self,
+        experiment_dir: str,
+        runs_folder: str = "logs",
+        results_folder: str = "results",
+        visualization_folder: str = "visualization",
+        trial: optuna.Trial = None,
+    ):
         self.experiment_dir = experiment_dir
         self.runs_folder = runs_folder
         self.results_folder = results_folder
@@ -37,26 +53,31 @@ class ExperimentRunner:
         self.trial = trial
         self.experiment_factory = ExperimentFactory(self.config)
         if self.trial is not None:
-            self.runs_folder = 'optuna'
+            self.runs_folder = "optuna"
 
     def _get_callbacks(self, logdir, scheduler=None):
-        callabacks = OrderedDict({
-            "pr": dl.ControlFlowCallback(base_callback=LogPRCurve(os.path.join(logdir, 'pr')),
-                                         loaders='valid'),
-            "ap": dl.ControlFlowCallback(base_callback=dl.LoaderMetricCallback(metric=APMetric(),
-                                                                               input_key="scores",
-                                                                               target_key="targets"),
-                                         loaders='valid'
-                                         ),
-            "auc": dl.ControlFlowCallback(
-                base_callback=dl.AUCCallback(input_key="logits", target_key="targets"),
-                loaders='valid'),
-
-            "earlystopping": dl.EarlyStoppingCallback(patience=20, loader_key='valid', metric_key='ap',
-                                                      minimize=False)
-        })
+        callabacks = OrderedDict(
+            {
+                "pr": dl.ControlFlowCallback(
+                    base_callback=LogPRCurve(os.path.join(logdir, "pr")), loaders="valid"
+                ),
+                "ap": dl.ControlFlowCallback(
+                    base_callback=dl.LoaderMetricCallback(
+                        metric=APMetric(), input_key="scores", target_key="targets"
+                    ),
+                    loaders="valid",
+                ),
+                "auc": dl.ControlFlowCallback(
+                    base_callback=dl.AUCCallback(input_key="logits", target_key="targets"),
+                    loaders="valid",
+                ),
+                "earlystopping": dl.EarlyStoppingCallback(
+                    patience=20, loader_key="valid", metric_key="ap", minimize=False
+                ),
+            }
+        )
         if scheduler is not None:
-            callabacks["scheduler"] = dl.SchedulerCallback(loader_key='valid', metric_key='ap')
+            callabacks["scheduler"] = dl.SchedulerCallback(loader_key="valid", metric_key="ap")
 
         if self.trial is not None:
             callabacks["optuna"] = dl.OptunaPruningCallback(
@@ -65,7 +86,7 @@ class ExperimentRunner:
         return callabacks
 
     def run_visualization(self):
-        if 'visualization' not in self.config:
+        if "visualization" not in self.config:
             logging.info("Visualization configuration not found")
             return
         vis_conf = self.config.visualization
@@ -83,7 +104,7 @@ class ExperimentRunner:
         experiments = os.listdir(runs_dir)
 
         # Run evaluation on specified targets in config
-        if 'evaluation' in self.config:
+        if "evaluation" in self.config:
             experiments = self.config.evaluation.targets
 
         results = dict()
@@ -100,35 +121,38 @@ class ExperimentRunner:
             )
             with open_log(save_to, name=experiment_name, mode=LoggingMode.OVERWRITE) as logdir:
                 labels, scores = evaluate_model(model=model, loader=test_loader, logdir=logdir)
-                results[experiment_name] = {
-                    'labels': labels,
-                    'scores': scores
-                }
+                results[experiment_name] = {"labels": labels, "scores": scores}
 
-        with open_log(save_to, name='all', mode=LoggingMode.OVERWRITE) as logdir:
+        with open_log(save_to, name="all", mode=LoggingMode.OVERWRITE) as logdir:
             aggregate_results(results, metrics=self.config.evaluation.metrics, logdir=logdir)
 
-    def run_meta_experiment(self, name: str = 'meta', logging_mode: LoggingMode = LoggingMode.OVERWRITE):
+    def run_meta_experiment(
+        self, name: str = "meta", logging_mode: LoggingMode = LoggingMode.OVERWRITE
+    ):
         experiment = self.experiment_factory.prepare_meta_experiment(name=name)
         set_global_seed(self.config["seed"])
         synth_data = experiment.loaders["train"].dataset
-        runner = MetaClassificationRunner(dataset=synth_data, use_kde=experiment.hparams.use_kde,
-                                          use_armijo=experiment.hparams.use_armijo)
+        runner = MetaClassificationRunner(
+            dataset=synth_data,
+            use_kde=experiment.hparams.use_kde,
+            use_armijo=experiment.hparams.use_armijo,
+        )
         log_to = os.path.join(self.experiment_dir, self.runs_folder)
         with open_log(log_to, name=experiment.name, mode=logging_mode) as logdir:
             callbacks = self._get_callbacks(logdir)
             callbacks["save_synthetic"] = SaveSyntheticData(log_dir=logdir, save_best=True)
-            runner.train(model=experiment.model,
-                         loaders=experiment.loaders,
-                         logdir=logdir,
-                         num_epochs=experiment.epochs,
-                         hparams=experiment.hparams,
-                         valid_loader="valid",
-                         valid_metric="ap",
-                         verbose=False,
-                         minimize_valid_metric=False,
-                         callbacks=callbacks
-                         )
+            runner.train(
+                model=experiment.model,
+                loaders=experiment.loaders,
+                logdir=logdir,
+                num_epochs=experiment.epochs,
+                hparams=experiment.hparams,
+                valid_loader="valid",
+                valid_metric="ap",
+                verbose=False,
+                minimize_valid_metric=False,
+                callbacks=callbacks,
+            )
 
     def run_baseline_experiment(self, name: str = "base", logging_mode=LoggingMode.OVERWRITE):
         set_global_seed(self.config["seed"])
@@ -141,25 +165,26 @@ class ExperimentRunner:
         with open_log(log_to, name=experiment.name, mode=logging_mode) as logdir:
             runner = ClassificationRunner()
             callbacks = self._get_callbacks(logdir, scheduler=experiment.scheduler)
-            runner.train(model=experiment.model,
-                         criterion=experiment.criterion,
-                         optimizer=experiment.optimizer,
-                         scheduler=experiment.scheduler,
-                         loaders=experiment.loaders,
-                         logdir=logdir,
-                         num_epochs=experiment.epochs,
-                         hparams=self.config.experiments[name].to_dict(),
-                         valid_loader="valid",
-                         valid_metric="ap",
-                         verbose=False,
-                         minimize_valid_metric=False,
-                         callbacks=callbacks
-                         )
+            runner.train(
+                model=experiment.model,
+                criterion=experiment.criterion,
+                optimizer=experiment.optimizer,
+                scheduler=experiment.scheduler,
+                loaders=experiment.loaders,
+                logdir=logdir,
+                num_epochs=experiment.epochs,
+                hparams=self.config.experiments[name].to_dict(),
+                valid_loader="valid",
+                valid_metric="ap",
+                verbose=False,
+                minimize_valid_metric=False,
+                callbacks=callbacks,
+            )
 
 
 def run_keel_experiments():
-    for data_name in os.listdir('./Keel1'):
-        c_path = f'./Keel1/{data_name}'
+    for data_name in os.listdir("./Keel1"):
+        c_path = f"./Keel1/{data_name}"
         print("Processing ", c_path)
         runner = ExperimentRunner(c_path)
         with contextlib.redirect_stdout(io.StringIO()):
@@ -171,7 +196,7 @@ def run_keel_experiments():
 
 
 def main(argv):
-    exper_dir = f'./Adult/ir200/'
+    exper_dir = f"./Adult/ir200/"
     exper_runner = ExperimentRunner(exper_dir)
     # exper_runner.run_baseline_experiment(name='potential')
     exper_runner.run_meta_experiment(name="meta")

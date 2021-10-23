@@ -1,16 +1,19 @@
 import torch
 import numpy as np
-import random
 from typing import List, Union
 from data_utils import load_arrays
-from catalyst.data.sampler import BalanceClassSampler
 from torch.utils.data import Dataset
 
 
 class TableDataset(Dataset):
-
-    def __init__(self, features: Union[torch.Tensor, np.array], targets: Union[torch.Tensor, np.array],
-                 train: bool = True, transform=None, target_transform=None):
+    def __init__(
+            self,
+            features: Union[torch.Tensor, np.array],
+            targets: Union[torch.Tensor, np.array],
+            train: bool = True,
+            transform=None,
+            target_transform=None,
+    ):
         self.data = features
         self.target = targets
         self.train = train
@@ -24,11 +27,11 @@ class TableDataset(Dataset):
         return self
 
     def __repr__(self):
-        descr = f'''{self.__class__.__name__} (shape {tuple(self.data.shape)}
-        Majority size: {(self.target==0).sum()}
-        Minority size: {(self.target==1).sum()}
-        IR:{(self.target==0).sum()/(self.target==1).sum():.2f})
-        '''
+        descr = f"""{self.__class__.__name__} (shape {tuple(self.data.shape)}
+        Majority size: {(self.target == 0).sum()}
+        Minority size: {(self.target == 1).sum()}
+        IR:{(self.target == 0).sum() / (self.target == 1).sum():.2f})
+        """
         return descr
 
     def __len__(self):
@@ -50,9 +53,12 @@ class TableDataset(Dataset):
 
 
 class SyntheticDataset(Dataset):
-    def __init__(self, real_data: Union[str, List[str]], synthetic_data: Union[str, List[str]],
-                 valid_data: Union[str, List[str]]):
-
+    def __init__(
+            self,
+            real_data: Union[str, List[str]],
+            synthetic_data: Union[str, List[str]],
+            valid_data: Union[str, List[str]],
+    ):
         # Features of the real data
         self._features_real, self._targets_real = load_arrays(real_data)
 
@@ -72,20 +78,20 @@ class SyntheticDataset(Dataset):
         return len(self.target)
 
     def __repr__(self):
-        descr = f''' {self.__class__.__name__} shape {tuple(self.features.shape)}
-        Number of real examples: {self.size_real} (#Maj {(self._targets_real == 0).sum()}, #Min {(self._targets_real == 1).sum()}) 
+        descr = f""" {self.__class__.__name__} shape {tuple(self.features.shape)}
+        Number of real examples: {self.size_real} (#Maj {(self._targets_real == 0).sum()}, #Min {(self._targets_real == 1).sum()})
         Number of synthetic examples: {self._targets_synthetic.shape[0]}
-        '''
+        """
 
         return descr
 
     @property
     def real_dataset(self):
-        return {'X': self.features[:self.size_real], 'y': self.target[:self.size_real]}
+        return {"X": self.features[: self.size_real], "y": self.target[: self.size_real]}
 
     @property
     def synthetic_dataset(self):
-        return {'X': self.features[self.size_real:], 'y': self.target[self.size_real:]}
+        return {"X": self.features[self.size_real:], "y": self.target[self.size_real:]}
 
     def __getitem__(self, item):
         holdout_x = self._features_holdout[item % self.size_holdout]
@@ -98,6 +104,6 @@ class SyntheticDataset(Dataset):
             "features": x,
             "target": y,
             "is_synthetic": np.array(False if item < self.size_real else True),
-            "index": item
+            "index": item,
         }
         return data_item
