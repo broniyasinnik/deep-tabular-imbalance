@@ -1,0 +1,4 @@
+outs:
+- md5: ae2394455c399d2372f1d4d47ceddbed
+  size: 5857161
+  path: adult_full.csv
