@@ -1,0 +1,17 @@
+dataset: "adult_ir50"
+seed: 42
+ir: 50
+train_file: "./Adult/ir50/adult_ir50.tra.npz"
+holdout_file: "./Adult/ir50/adult_ir50.hout.npz"
+valid_file: "./Adult/ir50/adult_ir50.val.npz"
+test_file: "./Adult/ir50/adult_ir50.tst.npz"
+smote_file: "./Adult/ir50/adult_ir50.smt.npz"
+num_epochs: 200
+model:
+  input_dim: 14
+  hiddens: [128, 16]
+hparams:
+  batch_size: 512
+  lr_model: 1.0e-3
+  lr_z: 1.0e+3
+  lr_meta: 5.e-2

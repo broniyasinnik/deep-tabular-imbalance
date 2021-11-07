@@ -1,9 +1,7 @@
-import contextlib
-import io
 import os
 from collections import OrderedDict
+from typing import List
 
-import numpy as np
 import optuna
 from absl import app, flags, logging
 from catalyst import dl, utils
@@ -20,15 +18,14 @@ from experiment_utils import (
     open_log,
 )
 from models.metrics import APMetric
-from runners import (
-    ClassificationRunner,
-    MetaClassificationRunner,
-    evaluate_model,
-)
+from runners import evaluate_model
 from visualization_utils import visualize_projection
 
+logging.set_verbosity(logging.INFO)
+
 FLAGS = flags.FLAGS
-flags.DEFINE_string("exper_dir", "./Adult/ir100/", help="Directory with experiment configuration")
+flags.DEFINE_string("experiment_dir", "./experiments/adult_exper2/ir50", help="Directory with experiment configuration")
+flags.DEFINE_list("experiment_targets", [], "Targets to run in experiment")
 flags.DEFINE_string("runs_dir", "logs", help="Name of directory to save run logs")
 flags.DEFINE_string("result_dir", "results", help="Name of directory to save the results")
 flags.DEFINE_string(
@@ -40,12 +37,14 @@ class ExperimentRunner:
     def __init__(
         self,
         experiment_dir: str,
-        runs_folder: str = "logs",
-        results_folder: str = "results",
-        visualization_folder: str = "visualization",
+        experiment_targets: List,
+        runs_folder: str,
+        results_folder: str,
+        visualization_folder: str,
         trial: optuna.Trial = None,
     ):
         self.experiment_dir = experiment_dir
+        self.experiment_targets = experiment_targets
         self.runs_folder = runs_folder
         self.results_folder = results_folder
         self.visualization_folder = visualization_folder
@@ -126,80 +125,83 @@ class ExperimentRunner:
         with open_log(save_to, name="all", mode=LoggingMode.OVERWRITE) as logdir:
             aggregate_results(results, metrics=self.config.evaluation.metrics, logdir=logdir)
 
-    def run_meta_experiment(
-        self, name: str = "meta", logging_mode: LoggingMode = LoggingMode.OVERWRITE
-    ):
-        experiment = self.experiment_factory.prepare_meta_experiment(name=name)
+    # def run_meta_experiment(
+    #     self, name: str = "meta", logging_mode: LoggingMode = LoggingMode.OVERWRITE
+    # ):
+    #     experiment = self.experiment_factory.prepare_meta_experiment(name=name)
+    #     set_global_seed(self.config["seed"])
+    #     synth_data = experiment.loaders["train"].dataset
+    #     runner = MetaClassificationRunner(
+    #         dataset=synth_data,
+    #         use_kde=experiment.hparams.use_kde,
+    #         use_armijo=experiment.hparams.use_armijo,
+    #     )
+    #     log_to = os.path.join(self.experiment_dir, self.runs_folder)
+    #     with open_log(log_to, name=experiment.name, mode=logging_mode) as logdir:
+    #         callbacks = self._get_callbacks(logdir)
+    #         callbacks["save_synthetic"] = SaveSyntheticData(log_dir=logdir, save_best=True)
+    #         runner.train(
+    #             model=experiment.model,
+    #             loaders=experiment.loaders,
+    #             logdir=logdir,
+    #             num_epochs=experiment.epochs,
+    #             hparams=experiment.hparams,
+    #             valid_loader="valid",
+    #             valid_metric="ap",
+    #             verbose=False,
+    #             minimize_valid_metric=False,
+    #             callbacks=callbacks,
+    #         )
+
+    def run_experiments(self, logging_mode=LoggingMode.OVERWRITE):
         set_global_seed(self.config["seed"])
-        synth_data = experiment.loaders["train"].dataset
-        runner = MetaClassificationRunner(
-            dataset=synth_data,
-            use_kde=experiment.hparams.use_kde,
-            use_armijo=experiment.hparams.use_armijo,
-        )
-        log_to = os.path.join(self.experiment_dir, self.runs_folder)
-        with open_log(log_to, name=experiment.name, mode=logging_mode) as logdir:
-            callbacks = self._get_callbacks(logdir)
-            callbacks["save_synthetic"] = SaveSyntheticData(log_dir=logdir, save_best=True)
-            runner.train(
-                model=experiment.model,
-                loaders=experiment.loaders,
-                logdir=logdir,
-                num_epochs=experiment.epochs,
-                hparams=experiment.hparams,
-                valid_loader="valid",
-                valid_metric="ap",
-                verbose=False,
-                minimize_valid_metric=False,
-                callbacks=callbacks,
-            )
 
-    def run_baseline_experiment(self, name: str = "base", logging_mode=LoggingMode.OVERWRITE):
-        set_global_seed(self.config["seed"])
-
-        experiment = self.experiment_factory.prepare_baseline_experiment(name)
-        if name == "base":
-            experiment.model.classifier[-1].bias.data.fill_(np.log(1 / experiment.ir))
-
-        log_to = os.path.join(self.experiment_dir, self.runs_folder)
-        with open_log(log_to, name=experiment.name, mode=logging_mode) as logdir:
-            runner = ClassificationRunner()
-            callbacks = self._get_callbacks(logdir, scheduler=experiment.scheduler)
-            runner.train(
-                model=experiment.model,
-                criterion=experiment.criterion,
-                optimizer=experiment.optimizer,
-                scheduler=experiment.scheduler,
-                loaders=experiment.loaders,
-                logdir=logdir,
-                num_epochs=experiment.epochs,
-                hparams=self.config.experiments[name].to_dict(),
-                valid_loader="valid",
-                valid_metric="ap",
-                verbose=False,
-                minimize_valid_metric=False,
-                callbacks=callbacks,
-            )
+        for experiment_name in self.experiment_targets:
+            logging.info(f"Starting experiment {experiment_name}...")
+            experiment = self.experiment_factory.prepare_experiment(experiment_name)
+            log_to = os.path.join(self.experiment_dir, self.runs_folder)
+            with open_log(log_to, name=experiment.name, mode=logging_mode) as logdir:
+                runner = experiment.runner
+                callbacks = self._get_callbacks(logdir, scheduler=experiment.scheduler)
+                runner.train(
+                    model=experiment.model,
+                    criterion=experiment.criterion,
+                    optimizer=experiment.optimizer,
+                    scheduler=experiment.scheduler,
+                    loaders=experiment.loaders,
+                    logdir=logdir,
+                    num_epochs=experiment.epochs,
+                    hparams=self.config.experiments[experiment_name].hparams,
+                    valid_loader="valid",
+                    valid_metric="ap",
+                    verbose=False,
+                    minimize_valid_metric=False,
+                    callbacks=callbacks,
+                )
 
 
-def run_keel_experiments():
-    for data_name in os.listdir("./Keel1"):
-        c_path = f"./Keel1/{data_name}"
-        print("Processing ", c_path)
-        runner = ExperimentRunner(c_path)
-        with contextlib.redirect_stdout(io.StringIO()):
-            # run_meta_experiment(c_path)
-            runner.run_evaluation(c_path)
-            # run_baseline_experiment(c_path, baseline="smote")
-        # run_meta_experiment(conf)
-        # run_meta_experiment(c_path)
+# def run_keel_experiments():
+#     for data_name in os.listdir("./Keel1"):
+#         c_path = f"./Keel1/{data_name}"
+#         print("Processing ", c_path)
+#         runner = ExperimentRunner(c_path)
+#         with contextlib.redirect_stdout(io.StringIO()):
+#             # run_meta_experiment(c_path)
+#             runner.run_evaluation(c_path)
+#             # run_baseline_experiment(c_path, baseline="smote")
+#         # run_meta_experiment(conf)
+#         # run_meta_experiment(c_path)
 
 
 def main(argv):
-    exper_dir = f"./Adult/ir200/"
-    exper_runner = ExperimentRunner(exper_dir)
+    runner = ExperimentRunner(FLAGS.experiment_dir,
+                              FLAGS.experiment_targets,
+                              FLAGS.runs_dir,
+                              FLAGS.result_dir,
+                              FLAGS.visualization_dir)
+    runner.run_experiments()
     # exper_runner.run_baseline_experiment(name='potential')
-    exper_runner.run_meta_experiment(name="meta")
+    # exper_runner.run_meta_experiment(name="meta")
     # exper_runner.run_evaluation()
     return 0
 
