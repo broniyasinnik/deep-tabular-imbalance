@@ -1,19 +1,30 @@
-import torch
-import numpy as np
-import catalyst.dl as dl
-import torch.nn.functional as F
 from collections import OrderedDict
-from models.networks import GaussianKDE
-from torch.utils.data import DataLoader
+from copy import deepcopy
+from typing import Any, Mapping
+
+import catalyst.dl as dl
+import numpy as np
+import pandas as pd
+import os
+import torch
+import torch.nn.functional as F
+from catalyst import metrics
+from catalyst.typing import Dataset
 from torch.autograd import grad
 from torch.optim._functional import sgd
-from itertools import product, repeat
-from copy import deepcopy
-from catalyst import metrics
-from datasets import SyntheticDataset
-from typing import Mapping, Any, Optional, Dict
-from experiment_utils import save_predictions
+from torch.utils.data import DataLoader
+
+from datasets import TableSyntheticDataset
 from models.net import Net
+from models.networks import GaussianKDE
+
+
+def save_predictions(labels: np.array, scores: np.array, logdir: str):
+    df = pd.DataFrame(data={"labels": labels,
+                            "scores": scores}, columns=['labels', 'scores'])
+    assert os.path.exists(logdir), f"The directory {logdir} doesn't exist"
+    df.to_csv(os.path.join(logdir, "predictions.csv"),
+              index=False, header=True)
 
 
 @torch.no_grad()
@@ -52,7 +63,8 @@ def armijo_step_z(model: Net, z: torch.Tensor, z_grad: torch.Tensor,
 
 
 @torch.no_grad()
-def armijo_step_model(model: Net, gradients: torch.Tensor, steps: int, lr_meta: float, x: torch.Tensor, y: torch.Tensor):
+def armijo_step_model(model: Net, gradients: torch.Tensor, steps: int, lr_meta: float, x: torch.Tensor,
+                      y: torch.Tensor):
     num_coords = len(gradients)
     lr = torch.tensor([lr_meta / (2 ** i) for i in range(steps)], dtype=torch.float32)
     lr_total = torch.zeros(num_coords)
@@ -70,12 +82,6 @@ def armijo_step_model(model: Net, gradients: torch.Tensor, steps: int, lr_meta: 
     return lr_total
 
 
-    # for lr_lst in list(product(*repeat(lr, k))):
-    #     if loss < best_loss:
-    #         best = best_loss
-    #         best_lr = best_lr
-
-
 class LoggingMixin:
     def log_figure(self, tag: str, figure: np.ndarray):
         tb_loggers = self.loggers['_tensorboard']
@@ -86,33 +92,12 @@ class LoggingMixin:
 
 class MetaClassificationRunner(dl.Runner, LoggingMixin):
 
-    def __init__(self, dataset: SyntheticDataset, use_kde: bool = True, use_armijo=False, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.dataset = dataset
-        self.use_kde = use_kde
-        self.use_armijo = use_armijo
-        if use_kde:
-            real = self.dataset.get_real_dataset()
-            real_x, real_y = real["X"], real["y"]
-            minority = torch.tensor(real_x[real_y == 1.], dtype=torch.float32)
-            self.bw = torch.cdist(minority, minority).median()
-            self.kde = GaussianKDE(X=minority, bw=self.bw)
-
     def on_loader_start(self, runner):
         super().on_loader_start(runner)
-        if self.loader_key == "train":
-            loss_lst = ["loss", "loss_holdout"]
-            if self.use_kde:
-                loss_lst.append("loss_kde")
-            self.meters = {
-                key: metrics.AdditiveValueMetric(compute_on_call=False)
-                for key in loss_lst
-            }
-        else:
-            self.meters = {
-                key: metrics.AdditiveValueMetric(compute_on_call=False)
-                for key in ["loss"]
-            }
+        self.meters = {
+            key: metrics.AdditiveMetric(compute_on_call=False)
+            for key in ["loss"]
+        }
 
     def on_loader_end(self, runner):
         for key in self.meters:
@@ -125,81 +110,112 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
 
     def handle_batch(self, batch: Mapping[str, Any]) -> None:
         if self.is_train_loader:
-            is_synthetic = batch["is_synthetic"]
-            index = batch["index"]
-            x = batch["features"][~is_synthetic]
-            y = batch["target"][~is_synthetic]
-            synth_x = batch["features"][is_synthetic]
-            synth_y = batch["target"][is_synthetic]
-            holdout_x = batch["holdout_features"]
-            holdout_y = batch["holdout_target"]
-
-            # Calculate loss on the synthetic batch
-            with torch.no_grad():
-                logits = self.model(batch["features"])
-                logits.clamp(min=-10, max=10)
-                loss = F.binary_cross_entropy_with_logits(logits, batch["target"].reshape_as(logits))
-                self.batch_metrics.update({"loss": loss})
-
-            # Calculate model on real points
-            px = self.model(x)
-            loss = F.binary_cross_entropy_with_logits(px, y.reshape_as(px))
-            gradients_x = grad(loss, self.model.parameters())
+            x = batch["features_x"]
+            yx = batch["targets_x"]
+            z = batch["features_z"]
+            yz = batch["targets_z"]
+            items = batch["item"]
 
             # Calculate the gradient of the loss on the synthetic points
-            z = synth_x.clone().detach().requires_grad_(True)
+            z = z.clone().detach().requires_grad_(True)
+            optimizer = torch.optim.SGD([z], lr=self.hparams["lr_z"], momentum=0.0)
             pz = self.model(z)
-            loss_z = F.binary_cross_entropy_with_logits(pz, synth_y.reshape_as(pz))
+            loss_z = F.binary_cross_entropy_with_logits(pz, yz.reshape_as(pz))
             gradients_z = grad(loss_z, self.model.parameters(), create_graph=True)
 
-            # Take one gradient step with gradients obtained on z, and calculate loss on holdout
-            gradients = tuple(gradients_z[i] + gradients_x[i] for i in range(len(gradients_z)))
-            logits = self.model(holdout_x, lr=self.hparams["lr_meta"], gradients=gradients)
-            logits.clamp(min=-10, max=10)
-            loss_holdout = F.binary_cross_entropy_with_logits(logits, holdout_y.reshape_as(logits))
-            loss_holdout.backward()
+            logits = self.model(x, lr=self.hparams["lr_meta"], gradients=gradients_z)
+            # logits.clamp(min=-10, max=10)
+            loss_holdout = F.binary_cross_entropy_with_logits(logits, yx.reshape_as(logits))
+            # log metrics
             self.batch_metrics.update({
-                "loss_holdout": loss_holdout.data
+                "loss": loss_holdout.data
             })
+            self.meters["loss"].update(self.batch_metrics["loss"].item(), self.batch_size)
+            loss_holdout.backward()
+            optimizer.step()
+            optimizer.zero_grad()
 
-            if self.use_kde:
-                z1 = torch.clone(z.detach())
-                z1.requires_grad = True
-                loss_kde = -self.kde.log_prob(z1)
-                self.batch_metrics.update({"loss_kde": loss_kde})
-                loss_kde.backward()
-                z = z - self.hparams["lr_kde"] * z1.grad
+            # Update model
+            self.model.gradient_step_(lr=self.hparams["lr_meta"], gradients=gradients_z, alpha=self.hparams["alpha"])
+            # Save updated z to dataset
+            self.loader.dataset.features_synthetic[items] = z.detach()
 
-            with torch.no_grad():
-                sgd_params = dict(momentum_buffer_list=[],
-                                  weight_decay=0.,
-                                  momentum=0.,
-                                  dampening=0.,
-                                  nesterov=False)
-                if self.use_armijo:
-                    lr = armijo_step_model(self.model, param_grad=gradients,
-                                           lr_meta=self.hparams['lr_meta'])
-                    self.batch_metrics.update(lr_z=float(lr))
-                else:
-                    lr = self.hparams["lr_z"]
-                sgd([z], z.grad, lr=lr, **sgd_params)
-                z.grad.zero_()
+            # is_synthetic = batch["is_synthetic"]
+            # index = batch["index"]
+            # x = batch["features"][~is_synthetic]
+            # y = batch["target"][~is_synthetic]
+            # synth_x = batch["features"][is_synthetic]
+            # synth_y = batch["target"][is_synthetic]
+            # holdout_x = batch["holdout_features"]
+            # holdout_y = batch["holdout_target"]
 
-            # Save the update for model with the gradients obtained on z
-            self.model.gradient_step_(lr=self.hparams["lr_meta"], gradients=gradients)
+            # Calculate loss on the synthetic batch
+            # with torch.no_grad():
+            #     logits = self.model(batch["features"])
+            #     logits.clamp(min=-10, max=10)
+            #     loss = F.binary_cross_entropy_with_logits(logits, batch["target"].reshape_as(logits))
+            #     self.batch_metrics.update({"loss": loss})
 
-            # Update
-            ids = index[is_synthetic]
-            self.loader.dataset.features[ids] = z.detach()
+            # Calculate model on real points
+            # px = self.model(x)
+            # loss = F.binary_cross_entropy_with_logits(px, y.reshape_as(px))
+            # gradients_x = grad(loss, self.model.parameters())
+
+            # Calculate the gradient of the loss on the synthetic points
+            # z = synth_x.clone().detach().requires_grad_(True)
+            # pz = self.model(z)
+            # loss_z = F.binary_cross_entropy_with_logits(pz, synth_y.reshape_as(pz))
+            # gradients_z = grad(loss_z, self.model.parameters(), create_graph=True)
+
+            # Take one gradient step with gradients obtained on z, and calculate loss on holdout
+            # gradients = tuple(gradients_z[i] + gradients_x[i] for i in range(len(gradients_z)))
+            # logits = self.model(holdout_x, lr=self.hparams["lr_meta"], gradients=gradients)
+            # logits.clamp(min=-10, max=10)
+            # loss_holdout = F.binary_cross_entropy_with_logits(logits, holdout_y.reshape_as(logits))
+            # loss_holdout.backward()
+            # self.batch_metrics.update({
+            #     "loss_holdout": loss_holdout.data
+            # })
+            #
+            # if self.use_kde:
+            #     z1 = torch.clone(z.detach())
+            #     z1.requires_grad = True
+            #     loss_kde = -self.kde.log_prob(z1)
+            #     self.batch_metrics.update({"loss_kde": loss_kde})
+            #     loss_kde.backward()
+            #     z = z - self.hparams["lr_kde"] * z1.grad
+            #
+            # with torch.no_grad():
+            #     sgd_params = dict(momentum_buffer_list=[],
+            #                       weight_decay=0.,
+            #                       momentum=0.,
+            #                       dampening=0.,
+            #                       nesterov=False)
+            #     if self.use_armijo:
+            #         lr = armijo_step_model(self.model, param_grad=gradients,
+            #                                lr_meta=self.hparams['lr_meta'])
+            #         self.batch_metrics.update(lr_z=float(lr))
+            #     else:
+            #         lr = self.hparams["lr_z"]
+            #     sgd([z], z.grad, lr=lr, **sgd_params)
+            #     z.grad.zero_()
+            #
+            # # Save the update for model with the gradients obtained on z
+            # self.model.gradient_step_(lr=self.hparams["lr_meta"], gradients=gradients)
+            #
+            # # Update
+            # ids = index[is_synthetic]
+            # self.loader.dataset.features[ids] = z.detach()
 
         elif self.is_valid_loader:
             x, y = batch['features'], batch['targets']
             y_hat = self.model(x)
-            y_hat.clamp(min=-10, max=10)
+            # y_hat.clamp(min=-10, max=10)
             loss_x = F.binary_cross_entropy_with_logits(y_hat, y.reshape_as(y_hat))
             self.batch_metrics.update({
                 "loss": loss_x
             })
+            self.meters["loss"].update(self.batch_metrics["loss"].item(), self.batch_size)
 
             self.batch = {
                 "features": x,
@@ -208,8 +224,6 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
                 "scores": torch.sigmoid(y_hat.view(-1)),
             }
 
-        for key in self.meters:
-            self.meters[key].update(self.batch_metrics[key].item(), self.batch_size)
 
 
 class ClassificationRunner(dl.Runner, LoggingMixin):
@@ -217,7 +231,7 @@ class ClassificationRunner(dl.Runner, LoggingMixin):
     def on_loader_start(self, runner: "IRunner"):
         super().on_loader_start(runner)
         self.meters = {
-            "loss_x": metrics.AdditiveValueMetric(compute_on_call=False)
+            "loss": metrics.AdditiveValueMetric(compute_on_call=False)
         }
 
     def handle_batch(self, batch):
@@ -231,8 +245,8 @@ class ClassificationRunner(dl.Runner, LoggingMixin):
         elif self.is_valid_loader:
             loss = self.criterion(y_hat, y.reshape_as(y_hat))
 
-        self.batch_metrics.update({"loss_x": loss})
-        self.meters["loss_x"].update(self.batch_metrics["loss_x"].item(), self.batch_size)
+        self.batch_metrics.update({"loss": loss})
+        self.meters["loss"].update(self.batch_metrics["loss"].item(), self.batch_size)
 
         self.batch = {
             "features": x,
@@ -242,5 +256,5 @@ class ClassificationRunner(dl.Runner, LoggingMixin):
         }
 
     def on_loader_end(self, runner: "IRunner"):
-        self.loader_metrics["loss_x"] = self.meters["loss_x"].compute()[0]
+        self.loader_metrics["loss"] = self.meters["loss"].compute()[0]
         super().on_loader_end(runner)

@@ -1,37 +1,37 @@
+import functools
 import os
 import shutil
-import torch
-import yaml
+from collections import defaultdict
+from dataclasses import dataclass, field
+from enum import Enum
+from itertools import cycle
+from typing import Any, Dict, List, Union
+
+import catalyst
 import numpy as np
 import pandas as pd
-import catalyst
+import runners
+import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
-from collections import defaultdict
-from enum import Enum
-from dataclasses import dataclass, field
-from ml_collections import ConfigDict
+import yaml
+from catalyst.typing import Criterion, Model, Optimizer, Sampler, Scheduler
+from catalyst.utils.torch import load_checkpoint
+from catalyst import dl
 from matplotlib import pyplot as plt
-from itertools import cycle
-from torch.utils.data import DataLoader
-from sklearn.metrics import precision_recall_curve, roc_curve, auc, average_precision_score, roc_auc_score
-from catalyst.data.sampler import BalanceClassSampler
-from catalyst.typing import Model, Optimizer, Scheduler, Criterion
+from ml_collections import ConfigDict
+from sklearn.metrics import (
+    auc,
+    average_precision_score,
+    precision_recall_curve,
+    roc_auc_score,
+    roc_curve,
+)
+from torch.utils.data import DataLoader, Dataset
+
+from datasets import TableSyntheticDataset, TableDataset
 from models.net import Net
-from datasets import SyntheticDataset
-from datasets import TableDataset
-from typing import Dict, Any, List, Union
-from catalyst.typing import Sampler
 
 COLORS: List[str] = ['aqua', 'darkorange', 'cornflowerblue', 'red', 'black', 'orange', 'blue']
-
-
-def save_predictions(labels: np.array, scores: np.array, logdir: str):
-    df = pd.DataFrame(data={"labels": labels,
-                            "scores": scores}, columns=['labels', 'scores'])
-    assert os.path.exists(logdir), f"The directory {logdir} doesn't exist"
-    df.to_csv(os.path.join(logdir, "predictions.csv"),
-              index=False, header=True)
 
 
 def save_pr_curve(labels: np.array, scores: np.array, logdir: str):
@@ -148,6 +148,7 @@ class Experiment:
     epochs: int = field(default=0)
     loaders: Dict[str, torch.utils.data.DataLoader] = None
     model: Model = None
+    runner: dl.Runner = None
     optimizer: Optimizer = None
     scheduler: Scheduler = None
     criterion: Criterion = None
@@ -165,36 +166,75 @@ class ExperimentFactory:
         # self.hparams = config.hparams
         self.seed = config.seed
 
-    def prepare_baseline_experiment(self, name: str):
+    def prepare_experiment(self, name: str):
         assert name in self.config.experiments, f"No available configuration for experiment {name}"
         conf_experiment = self.config.experiments[name]
-        train_data = TableDataset.from_npz(conf_experiment.datasets.train, train=True)
+
+        # train_data = TableDataset.from_npz(conf_experiment.datasets.train, train=True)
+        train_data = get_train_data(train_file=conf_experiment.datasets.train,
+                                    synth_file=conf_experiment.datasets.get('synthetic'))
         valid_data = TableDataset.from_npz(conf_experiment.datasets.valid, train=False)
-        ir = (train_data.target == 0).sum() / (train_data.target == 1).sum()
+        ir = (train_data.targets == 0).sum() / (train_data.targets == 1).sum()
 
         loaders = get_train_valid_loaders(train_data, valid_data, params=conf_experiment)
         model = get_model(self.config.model)
-        optimizer = get_optimizer(model, params=conf_experiment.optimizer)
+        if self.config.model.get("init_last_layer"):
+            model.classifier[-1].bias.data.fill_(np.log(1 / ir))
+        if model_path := conf_experiment.get("preload"):
+            model.load_state_dict(load_checkpoint(model_path)['model_state_dict'])
+
+        optimizer = get_optimizer(model, params=conf_experiment.get('optimizer'))
         scheduler = get_scheduler(optimizer,
-                                  params=conf_experiment.scheduler) if 'scheduler' in conf_experiment else None
+                                  params=conf_experiment.get('scheduler'))
         criterion = get_criterion()
-        experiment = Experiment(name=name, ir=ir, loaders=loaders, model=model,
+        runner = get_runner(conf_experiment.runner)
+        experiment = Experiment(name=name, ir=ir, loaders=loaders, model=model, runner=runner,
                                 optimizer=optimizer, scheduler=scheduler, criterion=criterion,
                                 epochs=conf_experiment.epochs)
         return experiment
 
-    def prepare_meta_experiment(self, name: str):
-        conf_experiment = self.config.experiments[name]
-        train_data = SyntheticDataset(real_data=conf_experiment.datasets.train,
-                                      synthetic_data=conf_experiment.datasets.synthetic_train,
-                                      valid_data=conf_experiment.datasets.valid)
-        valid_data = TableDataset.from_npz(conf_experiment.datasets.valid, train=False)
-        loaders = get_train_valid_loaders(train_data, valid_data, params=conf_experiment)
-        model = get_model(self.config.model)
-        hparams = conf_experiment.hparams
-        experiment = Experiment(name=name, loaders=loaders, model=model,
-                                epochs=conf_experiment.epochs, hparams=hparams)
-        return experiment
+    # def prepare_meta_experiment(self, name: str):
+    #     conf_experiment = self.config.experiments[name]
+    #     train_data = SyntheticDataset(real_data=conf_experiment.datasets.train,
+    #                                   synthetic_data=conf_experiment.datasets.synthetic_train,
+    #                                   valid_data=conf_experiment.datasets.valid)
+    #     valid_data = TableDataset.from_npz(conf_experiment.datasets.valid, train=False)
+    #     loaders = get_train_valid_loaders(train_data, valid_data, params=conf_experiment)
+    #     model = get_model(self.config.model)
+    #     hparams = conf_experiment.hparams
+    #     experiment = Experiment(name=name, loaders=loaders, model=model,
+    #                             epochs=conf_experiment.epochs, hparams=hparams)
+    #     return experiment
+
+
+def check_empty_args(func):
+    @functools.wraps(func)
+    def inner(*args, **kwargs):
+        for arg in args:
+            if arg is None:
+                return None
+        for k, v in kwargs.items():
+            if v is None:
+                return None
+
+        return func(*args, **kwargs)
+
+    return inner
+
+
+def get_runner(params: ConfigDict):
+    params = params.to_dict()
+    _target = params.pop('_target_')
+    runner = getattr(runners, _target)(**params)
+    return runner
+
+
+def get_train_data(train_file: str, synth_file: str = None):
+    if synth_file is None:
+        return TableDataset.from_npz(train_file, train=True)
+    else:
+        return TableSyntheticDataset(real_data=train_file,
+                                     synthetic_data=synth_file)
 
 
 def get_test_loader(test_file: str, batch_size: int = 128):
@@ -204,12 +244,13 @@ def get_test_loader(test_file: str, batch_size: int = 128):
 
 
 def get_train_valid_loaders(train_data: Dataset, valid_data: Dataset, params: ConfigDict):
-    sampler = get_sampler(train_data.target.squeeze(), params.sampler) if 'sampler' in params else None
+    sampler = get_sampler(train_data.targets.squeeze(), params.get("sampler"))
     shuffle = True if sampler is None else False
     loaders = {
         "train": DataLoader(train_data, batch_size=params.batch_size, shuffle=shuffle, sampler=sampler),
         "valid": DataLoader(valid_data, batch_size=params.batch_size, shuffle=False),
     }
+
     return loaders
 
 
@@ -226,6 +267,7 @@ def get_model(params: ConfigDict) -> Model:
     return model
 
 
+@check_empty_args
 def get_optimizer(model, params: ConfigDict) -> Optimizer:
     opt_params = params.to_dict()
     _target = opt_params.pop('_target_')
@@ -233,6 +275,7 @@ def get_optimizer(model, params: ConfigDict) -> Optimizer:
     return optimizer
 
 
+@check_empty_args
 def get_scheduler(optimizer, params: ConfigDict) -> Scheduler:
     sch_params = params.to_dict()
     _target = sch_params.pop('_target_')
@@ -241,6 +284,7 @@ def get_scheduler(optimizer, params: ConfigDict) -> Scheduler:
     return scheduler
 
 
+@check_empty_args
 def get_sampler(labels, params: ConfigDict) -> Sampler:
     samp_params = params.to_dict()
     _target = samp_params.pop('_target_')
@@ -248,13 +292,15 @@ def get_sampler(labels, params: ConfigDict) -> Sampler:
     return sampler
 
 
-def get_criterion(pos_weight: float = None) -> Criterion:
-    if pos_weight is not None:
+@check_empty_args
+def get_criterion(pos_weight: float = 1.) -> Criterion:
+    if pos_weight != 1.:
         return nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
     else:
         return nn.BCEWithLogitsLoss()
 
 
+@check_empty_args
 def load_config(conf: str) -> ConfigDict:
     stream = open(conf, 'r')
     d = yaml.load(stream, Loader=yaml.FullLoader)

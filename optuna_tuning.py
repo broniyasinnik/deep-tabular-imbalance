@@ -36,6 +36,6 @@ def run_study(obj_func):
 
 
 if __name__ == "__main__":
-    exper_dir = './Adult/ir100'
+    exper_dir = './adult_exper1/ir100'
     baseline_func = partial(objective_base, baseline='upsampling')
     run_study(baseline_func)

@@ -1,12 +1,12 @@
 dataset: "adult_ir100"
 seed: 42
 ir: 100
-train_file: &train_file "./data/adult_ir100.tra.npz"
-holdout_file: &holdout_file "./data/adult_ir100.hout.npz"
-valid_file: &valid_file "./data/adult_ir100.val.npz"
-test_file: &test_file "./data/adult_ir100.tst.npz"
-smote_file: &smote_file "./data/adult_ir100.smt.npz"
-
+train_file: &train_file "./data/adult.tra.npz"
+holdout_file: &holdout_file "./data/adult.hout.npz"
+valid_file: &valid_file "./data/adult.val.npz"
+test_file: &test_file "./data/adult.tst.npz"
+smote_file: &smote_file "./data/adult.smt.npz"
+synthetic_file: &synthetic_file "./data/adult.synth.npz"
 
 visualization:
   PCA:
@@ -126,8 +126,8 @@ experiments:
     datasets:
       train:
         - *train_file
-      synthetic_train:
-        - *smote_file
+      synthetic:
+        - *synthetic_file
       valid:
         - *valid_file
     hparams:

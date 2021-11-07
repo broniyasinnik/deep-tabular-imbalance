@@ -1,17 +1,152 @@
 dataset: "adult_ir50"
 seed: 42
 ir: 50
-train_file: "./Adult/ir50/adult_ir50.tra.npz"
-holdout_file: "./Adult/ir50/adult_ir50.hout.npz"
-valid_file: "./Adult/ir50/adult_ir50.val.npz"
-test_file: "./Adult/ir50/adult_ir50.tst.npz"
-smote_file: "./Adult/ir50/adult_ir50.smt.npz"
-num_epochs: 200
+train_file: &train_file "./data/adult/ir50/adult_ir50.tra.npz"
+holdout_file: &holdout_file "./data/adult/ir50/adult_ir50.hout.npz"
+valid_file: &valid_file "./data/adult/ir50/adult_ir50.val.npz"
+test_file: &test_file "./data/adult/ir50/adult_ir50.tst.npz"
+smote_file: &smote_file "./data/adult/ir50/adult_ir50.smt.npz"
+synthetic_file: &synthetic_file "./data/adult/ir50/adult_ir50.synth.npz"
+
 model:
   input_dim: 14
   hiddens: [128, 16]
-hparams:
-  batch_size: 512
-  lr_model: 1.0e-3
-  lr_z: 1.0e+3
-  lr_meta: 5.e-2
+  init_last_layer: False
+
+visualization:
+  PCA:
+    params:
+      n_components: 2
+    fit:
+      - *train_file
+      - *valid_file
+      - *synthetic_file
+    transform:
+      - *train_file
+      - *valid_file
+      - *synthetic_file
+  TSNE:
+    params:
+      n_components: 2
+      verbose: 1
+      init: pca
+    fit:
+      - *train_file
+
+experiments:
+  potential:
+    runner:
+      _target_: ClassificationRunner
+    epochs: 200
+    batch_size: 128
+    datasets:
+      train:
+        - *train_file
+        - *holdout_file
+      valid:
+        - *valid_file
+    optimizer:
+      _target_: Adam
+      lr: 1.0e-2
+      weight_decay: 5.0e-5
+
+  base:
+    runner:
+      _target_: ClassificationRunner
+    epochs: 200
+    batch_size: 128
+    datasets:
+      train:
+        - *train_file
+      valid:
+        - *valid_file
+    optimizer:
+      _target_: Adam
+      lr: 1.0e-2
+      weight_decay: 5.0e-5
+
+  base_add_synth:
+    runner:
+      _target_: ClassificationRunner
+    epochs: 200
+    batch_size: 128
+    datasets:
+      train:
+        - *train_file
+        - *synthetic_file
+      valid:
+        - *valid_file
+    optimizer:
+      _target_: Adam
+      lr: 1.0e-2
+      weight_decay: 5.0e-5
+
+  upsampling:
+    runner:
+      _target_: ClassificationRunner
+    epochs: 200
+    batch_size: 128
+    datasets:
+      train:
+        - *train_file
+      valid:
+        - *valid_file
+    sampler:
+      _target_: BalanceClassSampler
+      mode: upsampling
+    optimizer:
+      _target_: Adam
+      lr: 1.0e-2
+      weight_decay: 5.0e-5
+
+  downsampling:
+    runner:
+      _target_: ClassificationRunner
+    epochs: 200
+    batch_size: 128
+    datasets:
+      train:
+        - *train_file
+      valid:
+        - *valid_file
+    sampler:
+      _target_: BalanceClassSampler
+      mode: downsampling
+    optimizer:
+      _target_: Adam
+      lr: 1.0e-2
+      weight_decay: 5.0e-5
+      
+  smote:
+    runner:
+      _target_: ClassificationRunner
+    epochs: 10
+    batch_size: 128
+    datasets:
+      train:
+        - *train_file
+        - *smote_file
+      valid:
+        - *valid_file
+    optimizer:
+      _target_: Adam
+      lr: 1.0e-2
+      weight_decay: 5.0e-5
+
+  meta:
+    batch_size: 256
+    epochs: 200
+    preload: "./experiments/adult_exper2/ir50/logs/base/checkpoints/best.pth"
+    runner:
+      _target_: MetaClassificationRunner
+    datasets:
+      train:
+        - *valid_file
+      valid:
+        - *valid_file
+      synthetic:
+        - *synthetic_file
+    hparams:
+      lr_meta: 1.0e-2
+      lr_z: 1.0e+2
+      alpha: 0.99

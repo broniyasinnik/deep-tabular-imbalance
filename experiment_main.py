@@ -70,9 +70,9 @@ class ExperimentRunner:
                     base_callback=dl.AUCCallback(input_key="logits", target_key="targets"),
                     loaders="valid",
                 ),
-                "earlystopping": dl.EarlyStoppingCallback(
-                    patience=20, loader_key="valid", metric_key="ap", minimize=False
-                ),
+                # "earlystopping": dl.EarlyStoppingCallback(
+                #     patience=20, loader_key="valid", metric_key="ap", minimize=False
+                # ),
             }
         )
         if scheduler is not None:
@@ -89,7 +89,7 @@ class ExperimentRunner:
             logging.info("Visualization configuration not found")
             return
         vis_conf = self.config.visualization
-        save_to = os.path.join(FLAGS.exper_dir, FLAGS.visualization_dir)
+        save_to = os.path.join(FLAGS.experiment_dir, FLAGS.visualization_dir)
         os.makedirs(save_to, exist_ok=True)
         for proj in vis_conf:
             visualize_projection(name=proj, save_to=save_to, **vis_conf[proj])
@@ -171,7 +171,7 @@ class ExperimentRunner:
                     loaders=experiment.loaders,
                     logdir=logdir,
                     num_epochs=experiment.epochs,
-                    hparams=self.config.experiments[experiment_name].hparams,
+                    hparams=self.config.experiments[experiment_name].get("hparams"),
                     valid_loader="valid",
                     valid_metric="ap",
                     verbose=False,
@@ -199,7 +199,10 @@ def main(argv):
                               FLAGS.runs_dir,
                               FLAGS.result_dir,
                               FLAGS.visualization_dir)
-    runner.run_experiments()
+    if len(argv) == 1:
+        runner.run_experiments()
+    elif argv[1] == "visualize":
+        runner.run_visualization()
     # exper_runner.run_baseline_experiment(name='potential')
     # exper_runner.run_meta_experiment(name="meta")
     # exper_runner.run_evaluation()

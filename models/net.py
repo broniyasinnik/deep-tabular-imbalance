@@ -1,28 +1,23 @@
+from typing import Tuple
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple
+
 
 class Net(nn.Module):
 
     def __init__(self, classifier: nn.Module = None):
         super(Net, self).__init__()
         self.classifier = classifier
-        # self.classifier = nn.Sequential(nn.Linear(2, 32), nn.ReLU(),
-        #                                 nn.Linear(32, 32), nn.ReLU(),
-        #                                 nn.Linear(32, 1))
 
-    def gradient_step_(self, lr: torch.Tensor, gradients: Tuple[torch.Tensor]):
-        if lr.size() == 1:
-            dtheta = lr * gradients
-        else:
-            dtheta = [lr[j]*gradients[j] for j in range(len(lr))]
+    def gradient_step_(self, lr: torch.Tensor, gradients: Tuple[torch.Tensor], alpha: float = 0.0):
         i = 0
         for layer in self.classifier:
             if isinstance(layer, nn.Linear):
-                layer.weight.data = layer.weight.data - dtheta[i]
-                layer.bias.data = layer.bias.data - dtheta[i + 1]
+                layer.weight.data = alpha * layer.weight.data + (1 - alpha) * (layer.weight.data - lr * gradients[i])
+                layer.bias.data = alpha * layer.bias.data + (1 - alpha) * (layer.bias.data - lr * gradients[i + 1])
                 i += 2
 
         # self.classifier[0].weight.data = self.classifier[0].weight.data - lr * gradients[0]
@@ -40,11 +35,7 @@ class Net(nn.Module):
                     linear_layers.extend([layer.weight, layer.bias])
 
             updated_layers = []
-            if lr.size() == 1:
-                dtheta = lr * gradients
-            else:
-                dtheta = [lr[j] * gradients[j] for j in range(len(lr))]
-            for layer_params, z_grads in zip(linear_layers, dtheta):
+            for layer_params, z_grads in zip(linear_layers, gradients):
                 update_layer = layer_params - lr * z_grads
                 updated_layers.append(update_layer)
 
@@ -74,5 +65,3 @@ class Net(nn.Module):
             # return out2
         else:
             return self.classifier(x)
-
-

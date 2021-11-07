@@ -14,8 +14,8 @@ class TableDataset(Dataset):
             transform=None,
             target_transform=None,
     ):
-        self.data = features
-        self.target = targets
+        self.features = features
+        self.targets = targets
         self.train = train
         self.transform = transform
         self.target_transform = target_transform
@@ -27,18 +27,18 @@ class TableDataset(Dataset):
         return self
 
     def __repr__(self):
-        descr = f"""{self.__class__.__name__} (shape {tuple(self.data.shape)}
-        Majority size: {(self.target == 0).sum()}
-        Minority size: {(self.target == 1).sum()}
-        IR:{(self.target == 0).sum() / (self.target == 1).sum():.2f})
+        descr = f"""{self.__class__.__name__} (shape {tuple(self.features.shape)}
+        Majority size: {(self.targets == 0).sum()}
+        Minority size: {(self.targets == 1).sum()}
+        IR:{(self.targets == 0).sum() / (self.targets == 1).sum():.2f})
         """
         return descr
 
     def __len__(self):
-        return len(self.data)
+        return self.features.shape[0]
 
     def __getitem__(self, item):
-        row, label = self.data[item], self.target[item]
+        row, label = self.features[item], self.targets[item]
         if self.transform is not None:
             row = self.transform(row)
         if self.target_transform is not None:
@@ -52,35 +52,35 @@ class TableDataset(Dataset):
         return sample
 
 
-class SyntheticDataset(Dataset):
+class TableSyntheticDataset(Dataset):
     def __init__(
             self,
             real_data: Union[str, List[str]],
             synthetic_data: Union[str, List[str]],
-            valid_data: Union[str, List[str]],
     ):
         # Features of the real data
-        self._features_real, self._targets_real = load_arrays(real_data)
+        self.features, self.targets = load_arrays(real_data)
 
         # Features of the synthetic Data
-        self._features_synthetic, self._targets_synthetic = load_arrays(synthetic_data)
+        self.features_synthetic, self.targets_synthetic = load_arrays(synthetic_data)
 
         # Features of the holdout data
-        self._features_holdout, self._targets_holdout = load_arrays(valid_data)
+        # self._features_holdout, self._targets_holdout = load_arrays(valid_data)
 
-        self.features = np.concatenate([self._features_real, self._features_synthetic])
-        self.target = np.concatenate([self._targets_real, self._targets_synthetic])
+        # self.features = np.concatenate([self._features_real, self._features_synthetic])
+        # self.target = np.concatenate([self._targets_real, self._targets_synthetic])
 
-        self.size_real = len(self._targets_real)
-        self.size_holdout = len(self._targets_holdout)
+        self.size_real = len(self.targets)
+        self.size_synth = len(self.targets_synthetic)
+        # self.size_holdout = len(self._targets_holdout)
 
     def __len__(self):
-        return len(self.target)
+        return self.size_synth
 
     def __repr__(self):
         descr = f""" {self.__class__.__name__} shape {tuple(self.features.shape)}
-        Number of real examples: {self.size_real} (#Maj {(self._targets_real == 0).sum()}, #Min {(self._targets_real == 1).sum()})
-        Number of synthetic examples: {self._targets_synthetic.shape[0]}
+        Number of real examples: {self.size_real} (#Maj {(self.targets == 0).sum()}, #Min {(self.targets == 1).sum()})
+        Number of synthetic examples: {self.targets_synthetic.shape[0]}
         """
 
         return descr
@@ -94,16 +94,25 @@ class SyntheticDataset(Dataset):
         return {"X": self.features[self.size_real:], "y": self.target[self.size_real:]}
 
     def __getitem__(self, item):
-        holdout_x = self._features_holdout[item % self.size_holdout]
-        holdout_y = self._targets_real[item % self.size_holdout]
-        x = self.features[item]
-        y = self.target[item]
+        # holdout_x = self._features_holdout[item % self.size_holdout]
+        # holdout_y = self._targets_real[item % self.size_holdout]
+        # x = self.features[item]
+        # y = self.target[item]
+        # data_item = {
+        #     "holdout_features": holdout_x,
+        #     "holdout_target": holdout_y,
+        #     "features": x,
+        #     "target": y,
+        #     "is_synthetic": np.array(False if item < self.size_real else True),
+        #     "index": item,
+        # }
+        t = item % 2
+        rand_ind = np.random.randint(self.features[self.targets == t].shape[0])
         data_item = {
-            "holdout_features": holdout_x,
-            "holdout_target": holdout_y,
-            "features": x,
-            "target": y,
-            "is_synthetic": np.array(False if item < self.size_real else True),
-            "index": item,
+            "features_z": self.features_synthetic[item],
+            "targets_z": self.targets_synthetic[item],
+            "features_x": self.features[self.targets == t][rand_ind],
+            "targets_x": self.targets[self.targets == t][rand_ind],
+            "item": item
         }
         return data_item
