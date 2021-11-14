@@ -121,9 +121,11 @@ experiments:
       train:
         train1: *train_file
         train2: *valid_file
-        synth: *synthetic_file
-      synthetic:
-        - *synthetic_file
+        synthetic: *synthetic_file
       valid:
         - *valid_file
+    hparams:
+      lr_data: 1.0e+2
+      lr_model: 1.0e-2
+      alpha: 0.9
 

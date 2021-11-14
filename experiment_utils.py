@@ -29,7 +29,6 @@ class LoggingMode(Enum):
 
 
 class open_log:
-
     def __init__(self, path: str, name: str, mode: LoggingMode):
         self.mode = mode
         if self.mode == LoggingMode.DEBUG:
@@ -54,8 +53,8 @@ class open_log:
 
 @dataclass
 class Experiment:
-    name: str = field(default='')
-    ir: float = field(default=0.)
+    name: str = field(default="")
+    ir: float = field(default=0.0)
     epochs: int = field(default=0)
     loaders: Dict[str, torch.utils.data.DataLoader] = None
     model: Model = None
@@ -89,37 +88,34 @@ class ExperimentFactory:
         else:
             train_data = TableDataset.from_npz(conf_experiment.datasets.train)
 
-        valid_data = TableDataset.from_npz(conf_experiment.datasets.valid, train=False, name=f"{name}_valid")
+        valid_data = TableDataset.from_npz(
+            conf_experiment.datasets.valid, train=False, name=f"{name}_valid"
+        )
 
         loaders = get_train_valid_loaders(train_data, valid_data, params=conf_experiment)
         model = get_model(self.config.model)
         if self.config.model.get("init_last_layer"):
             model.classifier[-1].bias.data.fill_(np.log(1 / train_data.ir))
         if model_path := conf_experiment.get("preload"):
-            model.load_state_dict(load_checkpoint(model_path)['model_state_dict'])
+            model.load_state_dict(load_checkpoint(model_path)["model_state_dict"])
 
-        optimizer = get_optimizer(model, params=conf_experiment.get('optimizer'))
-        scheduler = get_scheduler(optimizer,
-                                  params=conf_experiment.get('scheduler'))
+        optimizer = get_optimizer(model, params=conf_experiment.get("optimizer"))
+        scheduler = get_scheduler(optimizer, params=conf_experiment.get("scheduler"))
         criterion = get_criterion()
         runner = get_runner(conf_experiment.runner)
-        experiment = Experiment(name=name, ir=train_data.ir, loaders=loaders, model=model, runner=runner,
-                                optimizer=optimizer, scheduler=scheduler, criterion=criterion,
-                                epochs=conf_experiment.epochs)
+        experiment = Experiment(
+            name=name,
+            ir=train_data.ir,
+            loaders=loaders,
+            model=model,
+            runner=runner,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            criterion=criterion,
+            hparams=conf_experiment.get("hparams"),
+            epochs=conf_experiment.epochs,
+        )
         return experiment
-
-    # def prepare_meta_experiment(self, name: str):
-    #     conf_experiment = self.config.experiments[name]
-    #     train_data = SyntheticDataset(real_data=conf_experiment.datasets.train,
-    #                                   synthetic_data=conf_experiment.datasets.synthetic_train,
-    #                                   valid_data=conf_experiment.datasets.valid)
-    #     valid_data = TableDataset.from_npz(conf_experiment.datasets.valid, train=False)
-    #     loaders = get_train_valid_loaders(train_data, valid_data, params=conf_experiment)
-    #     model = get_model(self.config.model)
-    #     hparams = conf_experiment.hparams
-    #     experiment = Experiment(name=name, loaders=loaders, model=model,
-    #                             epochs=conf_experiment.epochs, hparams=hparams)
-    #     return experiment
 
 
 def check_empty_args(func):
@@ -139,7 +135,7 @@ def check_empty_args(func):
 
 def get_runner(params: ConfigDict):
     params = params.to_dict()
-    _target = params.pop('_target_')
+    _target = params.pop("_target_")
     runner = getattr(runners, _target)(**params)
     return runner
 
@@ -151,7 +147,6 @@ def get_test_loader(test_file: str, batch_size: int = 128):
 
 
 def get_train_valid_loaders(train_data: Dataset, valid_data: Dataset, params: ConfigDict):
-
     def collate_fn_train(batch: Dict[str, Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         batch_collated = default_collate(batch)
         for dataset_name in batch_collated:
@@ -164,7 +159,9 @@ def get_train_valid_loaders(train_data: Dataset, valid_data: Dataset, params: Co
                     index.append(i)
                     seen.add(inverse_index[i])
             index = torch.stack(index)
-            batch_collated[dataset_name]["features"] = batch_collated[dataset_name]["features"][index]
+            batch_collated[dataset_name]["features"] = batch_collated[dataset_name]["features"][
+                index
+            ]
             batch_collated[dataset_name]["targets"] = batch_collated[dataset_name]["targets"][index]
             batch_collated[dataset_name]["index"] = batch_collated[dataset_name]["index"][index]
 
@@ -179,17 +176,19 @@ def get_train_valid_loaders(train_data: Dataset, valid_data: Dataset, params: Co
 
     shuffle = True if sampler is None else False
     loaders = {
-        "train": DataLoader(train_data,
-                            batch_size=params.batch_size,
-                            shuffle=shuffle,
-                            sampler=sampler,
-                            collate_fn=collate_fn),
+        "train": DataLoader(
+            train_data,
+            batch_size=params.batch_size,
+            shuffle=shuffle,
+            sampler=sampler,
+            collate_fn=collate_fn,
+        ),
         "valid": DataLoader(valid_data, batch_size=params.batch_size, shuffle=False),
     }
     return loaders
 
 
-def get_config(config_file: str = 'config.yml') -> ConfigDict:
+def get_config(config_file: str = "config.yml") -> ConfigDict:
     assert os.path.exists(config_file), "configuration file doesn't exist"
     config = load_config(config_file)
     return config
@@ -210,7 +209,7 @@ def get_model(params: ConfigDict, checkpoint: str = None) -> Model:
 @check_empty_args
 def get_optimizer(model, params: ConfigDict) -> Optimizer:
     opt_params = params.to_dict()
-    _target = opt_params.pop('_target_')
+    _target = opt_params.pop("_target_")
     optimizer = getattr(torch.optim, _target)(model.classifier.parameters(), **opt_params)
     return optimizer
 
@@ -218,7 +217,7 @@ def get_optimizer(model, params: ConfigDict) -> Optimizer:
 @check_empty_args
 def get_scheduler(optimizer, params: ConfigDict) -> Scheduler:
     sch_params = params.to_dict()
-    _target = sch_params.pop('_target_')
+    _target = sch_params.pop("_target_")
     scheduler = getattr(torch.optim.lr_scheduler, _target)(optimizer, **sch_params)
 
     return scheduler
@@ -227,14 +226,14 @@ def get_scheduler(optimizer, params: ConfigDict) -> Scheduler:
 @check_empty_args
 def get_sampler(labels, params: ConfigDict) -> Sampler:
     samp_params = params.to_dict()
-    _target = samp_params.pop('_target_')
+    _target = samp_params.pop("_target_")
     sampler = getattr(catalyst.data.sampler, _target)(labels=labels, **samp_params)
     return sampler
 
 
 @check_empty_args
-def get_criterion(pos_weight: float = 1.) -> Criterion:
-    if pos_weight != 1.:
+def get_criterion(pos_weight: float = 1.0) -> Criterion:
+    if pos_weight != 1.0:
         return nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
     else:
         return nn.BCEWithLogitsLoss()
@@ -242,7 +241,7 @@ def get_criterion(pos_weight: float = 1.) -> Criterion:
 
 @check_empty_args
 def load_config(conf: str) -> ConfigDict:
-    stream = open(conf, 'r')
+    stream = open(conf, "r")
     d = yaml.load(stream, Loader=yaml.FullLoader)
     return ConfigDict(d)
 

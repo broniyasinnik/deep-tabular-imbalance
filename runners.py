@@ -87,22 +87,24 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
 
     def handle_batch(self, batch: Mapping[str, Any]) -> None:
         if self.is_train_loader:
-            x = batch["features_x"]
-            yx = batch["targets_x"]
-            z = batch["features_z"]
-            yz = batch["targets_z"]
-            items = batch["item"]
+            x = batch["train1"]["features"]
+            yx = batch["train1"]["targets"]
+            xh = batch["train2"]["features"]
+            yh = batch["train2"]["targets"]
+            z = batch["synthetic"]["features"]
+            yz = batch["synthetic"]["targets"]
+            items = batch["synthetic"]["index"]
 
             # Calculate the gradient of the loss on the synthetic points
             z = z.clone().detach().requires_grad_(True)
-            optimizer = torch.optim.SGD([z], lr=self.hparams["lr_z"], momentum=0.0)
-            pz = self.model(z)
-            loss_z = F.binary_cross_entropy_with_logits(pz, yz.reshape_as(pz))
+            optimizer = torch.optim.SGD([z], lr=self.hparams["lr_data"], momentum=0.0)
+            pz = self.model(torch.cat([z, x]))
+            loss_z = F.binary_cross_entropy_with_logits(pz, torch.cat([yz, yx]).reshape_as(pz))
             gradients_z = grad(loss_z, self.model.parameters(), create_graph=True)
 
-            logits = self.model(x, lr=self.hparams["lr_meta"], gradients=gradients_z)
+            logits_holdout = self.model(xh, lr=self.hparams["lr_model"], gradients=gradients_z)
             # logits.clamp(min=-10, max=10)
-            loss_holdout = F.binary_cross_entropy_with_logits(logits, yx.reshape_as(logits))
+            loss_holdout = F.binary_cross_entropy_with_logits(logits_holdout, yh.reshape_as(logits_holdout))
             # log metrics
             self.batch_metrics.update({
                 "loss": loss_holdout.data
@@ -113,76 +115,9 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
             optimizer.zero_grad()
 
             # Update model
-            self.model.gradient_step_(lr=self.hparams["lr_meta"], gradients=gradients_z, alpha=self.hparams["alpha"])
+            self.model.gradient_step_(lr=self.hparams["lr_model"], gradients=gradients_z, alpha=self.hparams["alpha"])
             # Save updated z to dataset
-            self.loader.dataset.features_synthetic[items] = z.detach()
-
-            # is_synthetic = batch["is_synthetic"]
-            # index = batch["index"]
-            # x = batch["features"][~is_synthetic]
-            # y = batch["target"][~is_synthetic]
-            # synth_x = batch["features"][is_synthetic]
-            # synth_y = batch["target"][is_synthetic]
-            # holdout_x = batch["holdout_features"]
-            # holdout_y = batch["holdout_target"]
-
-            # Calculate loss on the synthetic batch
-            # with torch.no_grad():
-            #     logits = self.model(batch["features"])
-            #     logits.clamp(min=-10, max=10)
-            #     loss = F.binary_cross_entropy_with_logits(logits, batch["target"].reshape_as(logits))
-            #     self.batch_metrics.update({"loss": loss})
-
-            # Calculate model on real points
-            # px = self.model(x)
-            # loss = F.binary_cross_entropy_with_logits(px, y.reshape_as(px))
-            # gradients_x = grad(loss, self.model.parameters())
-
-            # Calculate the gradient of the loss on the synthetic points
-            # z = synth_x.clone().detach().requires_grad_(True)
-            # pz = self.model(z)
-            # loss_z = F.binary_cross_entropy_with_logits(pz, synth_y.reshape_as(pz))
-            # gradients_z = grad(loss_z, self.model.parameters(), create_graph=True)
-
-            # Take one gradient step with gradients obtained on z, and calculate loss on holdout
-            # gradients = tuple(gradients_z[i] + gradients_x[i] for i in range(len(gradients_z)))
-            # logits = self.model(holdout_x, lr=self.hparams["lr_meta"], gradients=gradients)
-            # logits.clamp(min=-10, max=10)
-            # loss_holdout = F.binary_cross_entropy_with_logits(logits, holdout_y.reshape_as(logits))
-            # loss_holdout.backward()
-            # self.batch_metrics.update({
-            #     "loss_holdout": loss_holdout.data
-            # })
-            #
-            # if self.use_kde:
-            #     z1 = torch.clone(z.detach())
-            #     z1.requires_grad = True
-            #     loss_kde = -self.kde.log_prob(z1)
-            #     self.batch_metrics.update({"loss_kde": loss_kde})
-            #     loss_kde.backward()
-            #     z = z - self.hparams["lr_kde"] * z1.grad
-            #
-            # with torch.no_grad():
-            #     sgd_params = dict(momentum_buffer_list=[],
-            #                       weight_decay=0.,
-            #                       momentum=0.,
-            #                       dampening=0.,
-            #                       nesterov=False)
-            #     if self.use_armijo:
-            #         lr = armijo_step_model(self.model, param_grad=gradients,
-            #                                lr_meta=self.hparams['lr_meta'])
-            #         self.batch_metrics.update(lr_z=float(lr))
-            #     else:
-            #         lr = self.hparams["lr_z"]
-            #     sgd([z], z.grad, lr=lr, **sgd_params)
-            #     z.grad.zero_()
-            #
-            # # Save the update for model with the gradients obtained on z
-            # self.model.gradient_step_(lr=self.hparams["lr_meta"], gradients=gradients)
-            #
-            # # Update
-            # ids = index[is_synthetic]
-            # self.loader.dataset.features[ids] = z.detach()
+            self.loader.dataset.features["synthetic"][items] = z.detach()
 
         elif self.is_valid_loader:
             x, y = batch['features'], batch['targets']
