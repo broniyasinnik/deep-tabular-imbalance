@@ -1,114 +1,25 @@
 import functools
 import os
 import shutil
-from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
-from itertools import cycle
 from typing import Any, Dict, List, Union
 
 import catalyst
 import numpy as np
-import pandas as pd
-import runners
 import torch
 import torch.nn as nn
 import yaml
+from catalyst import dl, utils
 from catalyst.typing import Criterion, Model, Optimizer, Sampler, Scheduler
 from catalyst.utils.torch import load_checkpoint
-from catalyst import dl
-from matplotlib import pyplot as plt
 from ml_collections import ConfigDict
-from sklearn.metrics import (
-    auc,
-    average_precision_score,
-    precision_recall_curve,
-    roc_auc_score,
-    roc_curve,
-)
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data._utils.collate import default_collate
 
-from datasets import TableSyntheticDataset, TableDataset
+import runners
+from datasets import MultiTableDataset, TableDataset
 from models.net import Net
-
-COLORS: List[str] = ['aqua', 'darkorange', 'cornflowerblue', 'red', 'black', 'orange', 'blue']
-
-
-def save_pr_curve(labels: np.array, scores: np.array, logdir: str):
-    precision, recall, thresholds = precision_recall_curve(labels, scores, pos_label=1.)
-    thresholds = np.concatenate([thresholds, [1.]])
-    df = pd.DataFrame(data={"precision": precision,
-                            "recall": recall,
-                            "thresholds": thresholds})
-    assert os.path.exists(logdir), f"The directory {logdir} doesn't exist"
-    df.to_csv(os.path.join(logdir, "pr.csv"),
-              index=False)
-
-
-def save_pr_figure(results, logdir):
-    plt.figure()
-    plt.xlabel('Recall')
-    plt.ylabel('Precision')
-    plt.ylim([0.0, 1.05])
-    plt.xlim([0.0, 1.0])
-    plt.title('Precision-Recall Curve')
-    colors = cycle(COLORS)
-    for name in results:
-        labels, scores = results.get(name)['labels'], results.get(name)['scores']
-        precision, recall, _ = precision_recall_curve(labels, scores)
-        ap = average_precision_score(labels, scores)
-        plt.step(recall, precision, color=next(colors), where='post', label=f"PR of {name} (area = {ap:.2f})")
-    plt.legend()
-    plt.savefig(os.path.join(logdir, "pr.png"))
-    plt.close()
-
-
-def save_roc_figure(results, logdir):
-    plt.figure()
-    plt.xlabel('FPR')
-    plt.ylabel('TPR')
-    plt.ylim([0.0, 1.05])
-    plt.xlim([0.0, 1.0])
-    plt.title('ROC Curve')
-    colors = cycle(COLORS)
-    for name in results:
-        labels, scores = results.get(name)['labels'], results.get(name)['scores']
-        fpr, tpr, _ = roc_curve(labels, scores)
-        roc_auc = auc(fpr, tpr)
-        plt.step(fpr, tpr, where='post', color=next(colors), label=f"ROC of {name} (area = {roc_auc:.2f})")
-    plt.legend()
-    plt.savefig(os.path.join(logdir, "roc.png"))
-    plt.close()
-
-
-def save_metrics_table(results: Dict[str, Any], save_ap: bool, save_auc: bool, p_at: List, logdir: str):
-    metrics = defaultdict(list)
-    for name in results:
-        labels, scores = results.get(name)['labels'], results.get(name)['scores']
-        precision, recall, _ = precision_recall_curve(labels, scores)
-        ap = average_precision_score(labels, scores)
-        roc_auc = roc_auc_score(labels, scores)
-        metrics["AP"].append(ap)
-        metrics["AUC"].append(roc_auc)
-        for r in p_at:
-            metrics[f'P@{int(r * 100)}%'].append(precision[recall >= r][-1])
-
-    df = pd.DataFrame(data=metrics, index=results.keys())
-    df.to_csv(os.path.join(logdir, 'metrics.csv'), index=True)
-
-
-def aggregate_results(results: Dict[str, Any], metrics: ConfigDict, logdir: str):
-    if 'pr' in metrics:
-        save_pr_figure(results, logdir)
-    if 'roc' in metrics:
-        save_roc_figure(results, logdir)
-    save_ap = 'ap' in metrics
-    save_auc = 'auc' in metrics
-    p = next(filter(lambda x: x.startswith('p@'), metrics), [])
-    if p:
-        p = list(map(lambda x: float(x.strip()), p.partition('@')[2].split(',')))
-
-    save_metrics_table(results, save_ap=save_ap, save_auc=save_auc, p_at=p, logdir=logdir)
 
 
 class LoggingMode(Enum):
@@ -171,15 +82,19 @@ class ExperimentFactory:
         conf_experiment = self.config.experiments[name]
 
         # train_data = TableDataset.from_npz(conf_experiment.datasets.train, train=True)
-        train_data = get_train_data(train_file=conf_experiment.datasets.train,
-                                    synth_file=conf_experiment.datasets.get('synthetic'))
-        valid_data = TableDataset.from_npz(conf_experiment.datasets.valid, train=False)
-        ir = (train_data.targets == 0).sum() / (train_data.targets == 1).sum()
+        # train_data = get_train_data(train_file=conf_experiment.datasets.train,
+        #                             synth_file=conf_experiment.datasets.get('synthetic'))
+        if isinstance(conf_experiment.datasets.train, ConfigDict):
+            train_data = MultiTableDataset.from_npz_files(conf_experiment.datasets.train)
+        else:
+            train_data = TableDataset.from_npz(conf_experiment.datasets.train)
+
+        valid_data = TableDataset.from_npz(conf_experiment.datasets.valid, train=False, name=f"{name}_valid")
 
         loaders = get_train_valid_loaders(train_data, valid_data, params=conf_experiment)
         model = get_model(self.config.model)
         if self.config.model.get("init_last_layer"):
-            model.classifier[-1].bias.data.fill_(np.log(1 / ir))
+            model.classifier[-1].bias.data.fill_(np.log(1 / train_data.ir))
         if model_path := conf_experiment.get("preload"):
             model.load_state_dict(load_checkpoint(model_path)['model_state_dict'])
 
@@ -188,7 +103,7 @@ class ExperimentFactory:
                                   params=conf_experiment.get('scheduler'))
         criterion = get_criterion()
         runner = get_runner(conf_experiment.runner)
-        experiment = Experiment(name=name, ir=ir, loaders=loaders, model=model, runner=runner,
+        experiment = Experiment(name=name, ir=train_data.ir, loaders=loaders, model=model, runner=runner,
                                 optimizer=optimizer, scheduler=scheduler, criterion=criterion,
                                 epochs=conf_experiment.epochs)
         return experiment
@@ -229,14 +144,6 @@ def get_runner(params: ConfigDict):
     return runner
 
 
-def get_train_data(train_file: str, synth_file: str = None):
-    if synth_file is None:
-        return TableDataset.from_npz(train_file, train=True)
-    else:
-        return TableSyntheticDataset(real_data=train_file,
-                                     synthetic_data=synth_file)
-
-
 def get_test_loader(test_file: str, batch_size: int = 128):
     test_data = TableDataset.from_npz(test_file, train=False)
     loader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
@@ -244,26 +151,59 @@ def get_test_loader(test_file: str, batch_size: int = 128):
 
 
 def get_train_valid_loaders(train_data: Dataset, valid_data: Dataset, params: ConfigDict):
-    sampler = get_sampler(train_data.targets.squeeze(), params.get("sampler"))
+
+    def collate_fn_train(batch: Dict[str, Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+        batch_collated = default_collate(batch)
+        for dataset_name in batch_collated:
+            batch_data = batch_collated[dataset_name]
+            _, inverse_index = torch.unique(batch_data["index"], return_inverse=True)
+            seen = set()
+            index = []
+            for i in torch.arange(len(inverse_index)):
+                if inverse_index[i] not in seen:
+                    index.append(i)
+                    seen.add(inverse_index[i])
+            index = torch.stack(index)
+            batch_collated[dataset_name]["features"] = batch_collated[dataset_name]["features"][index]
+            batch_collated[dataset_name]["targets"] = batch_collated[dataset_name]["targets"][index]
+            batch_collated[dataset_name]["index"] = batch_collated[dataset_name]["index"][index]
+
+        return batch_collated
+
+    sampler = None
+    collate_fn = None
+    if isinstance(train_data, TableDataset):
+        sampler = get_sampler(train_data.targets.squeeze(), params.get("sampler"))
+    elif isinstance(train_data, MultiTableDataset):
+        collate_fn = collate_fn_train
+
     shuffle = True if sampler is None else False
     loaders = {
-        "train": DataLoader(train_data, batch_size=params.batch_size, shuffle=shuffle, sampler=sampler),
+        "train": DataLoader(train_data,
+                            batch_size=params.batch_size,
+                            shuffle=shuffle,
+                            sampler=sampler,
+                            collate_fn=collate_fn),
         "valid": DataLoader(valid_data, batch_size=params.batch_size, shuffle=False),
     }
-
     return loaders
 
 
-def get_config(experiment_dir: str, config_name: str = 'config.yml') -> ConfigDict:
-    conf_file = os.path.join(experiment_dir, config_name)
-    assert os.path.exists(conf_file), "configuration file doesn't exist"
-    config = load_config(conf_file)
+def get_config(config_file: str = 'config.yml') -> ConfigDict:
+    assert os.path.exists(config_file), "configuration file doesn't exist"
+    config = load_config(config_file)
     return config
 
 
-def get_model(params: ConfigDict) -> Model:
+def get_model(params: ConfigDict, checkpoint: str = None) -> Model:
     classifier = prepare_mlp_classifier(input_dim=params.input_dim, hidden_dims=params.hiddens)
     model = Net(classifier)
+    if checkpoint:
+        checkpoint = utils.load_checkpoint(path=checkpoint)
+        utils.unpack_checkpoint(
+            checkpoint=checkpoint,
+            model=model,
+        )
     return model
 
 

@@ -8,24 +8,6 @@ test_file: &test_file "./data/adult.tst.npz"
 smote_file: &smote_file "./data/adult.smt.npz"
 synthetic_file: &synthetic_file "./data/adult.synth.npz"
 
-visualization:
-  PCA:
-    params:
-      n_components: 2
-    fit:
-      - *train_file
-      - *valid_file
-    transform:
-      - *test_file
-  TSNE:
-    params:
-      n_components: 2
-      verbose: 1
-      init: pca
-    fit:
-      - *train_file
-      - *valid_file
-      - *test_file
 
 model:
   input_dim: 14
@@ -48,6 +30,8 @@ evaluation:
 experiments:
 
   potential:
+    runner:
+      _target_: ClassificationRunner
     epochs: 200
     batch_size: 128
     datasets:
@@ -62,6 +46,8 @@ experiments:
       weight_decay: 5.0e-5
 
   base:
+    runner:
+      _target_: ClassificationRunner
     epochs: 200
     batch_size: 128
     datasets:
@@ -75,6 +61,8 @@ experiments:
       weight_decay: 5.0e-5
 
   upsampling:
+    runner:
+      _target_: ClassificationRunner
     epochs: 200
     batch_size: 128
     datasets:
@@ -91,6 +79,8 @@ experiments:
       weight_decay: 5.0e-5
 
   downsampling:
+    runner:
+      _target_: ClassificationRunner
     epochs: 200
     batch_size: 128
     datasets:
@@ -107,6 +97,8 @@ experiments:
       weight_decay: 5.0e-5
 
   smote:
+    runner:
+      _target_: ClassificationRunner
     epochs: 10
     batch_size: 128
     datasets:
@@ -121,19 +113,17 @@ experiments:
       weight_decay: 5.0e-5
 
   meta:
+    runner:
+      _target_: MetaClassificationRunner
     epochs: 200
     batch_size: 128
     datasets:
       train:
-        - *train_file
+        train1: *train_file
+        train2: *valid_file
+        synth: *synthetic_file
       synthetic:
         - *synthetic_file
       valid:
         - *valid_file
-    hparams:
-      use_kde: False
-      use_armijo: False
-      lr_z: 1.0e+5
-      lr_meta: 5.e-1
-      lr_kde: 10
 

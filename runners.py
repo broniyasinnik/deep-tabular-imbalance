@@ -14,32 +14,9 @@ from torch.autograd import grad
 from torch.optim._functional import sgd
 from torch.utils.data import DataLoader
 
-from datasets import TableSyntheticDataset
 from models.net import Net
 from models.networks import GaussianKDE
 
-
-def save_predictions(labels: np.array, scores: np.array, logdir: str):
-    df = pd.DataFrame(data={"labels": labels,
-                            "scores": scores}, columns=['labels', 'scores'])
-    assert os.path.exists(logdir), f"The directory {logdir} doesn't exist"
-    df.to_csv(os.path.join(logdir, "predictions.csv"),
-              index=False, header=True)
-
-
-@torch.no_grad()
-def evaluate_model(model, loader: DataLoader, logdir: str):
-    labels = []
-    scores = []
-    for batch in loader:
-        x, y = batch['features'], batch['targets']
-        y_hat = model(x)
-        labels.append(y.numpy())
-        scores.append(torch.sigmoid(y_hat).numpy())
-    labels = np.concatenate(labels).squeeze()
-    scores = np.concatenate(scores).squeeze()
-    save_predictions(labels, scores, logdir)
-    return labels, scores
 
 
 @torch.no_grad()

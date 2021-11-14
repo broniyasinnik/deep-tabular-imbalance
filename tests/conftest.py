@@ -5,7 +5,7 @@ from experiment_utils import ExperimentFactory
 
 @pytest.fixture(name='config')
 def fixture_config():
-    conf = load_config('./data/config.yml')
+    conf = load_config('./experiment/config.yml')
     return conf
 
 
@@ -13,3 +13,4 @@ def fixture_config():
 def fixture_factory(config):
     factory = ExperimentFactory(config)
     return factory
+

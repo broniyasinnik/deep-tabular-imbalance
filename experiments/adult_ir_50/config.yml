@@ -13,26 +13,6 @@ model:
   hiddens: [128, 16]
   init_last_layer: False
 
-visualization:
-  PCA:
-    params:
-      n_components: 2
-    fit:
-      - *train_file
-      - *valid_file
-      - *synthetic_file
-    transform:
-      - *train_file
-      - *valid_file
-      - *synthetic_file
-  TSNE:
-    params:
-      n_components: 2
-      verbose: 1
-      init: pca
-    fit:
-      - *train_file
-
 experiments:
   potential:
     runner:
@@ -136,16 +116,16 @@ experiments:
   meta:
     batch_size: 256
     epochs: 200
-    preload: "./experiments/adult_exper2/ir50/logs/base/checkpoints/best.pth"
+#    preload: "./experiments/adult_ir50/logs/base/checkpoints/best.pth"
     runner:
       _target_: MetaClassificationRunner
     datasets:
       train:
-        - *valid_file
+        train1: *train_file
+        train2: *train_file
+        synthetic: *synthetic_file
       valid:
         - *valid_file
-      synthetic:
-        - *synthetic_file
     hparams:
       lr_meta: 1.0e-2
       lr_z: 1.0e+2

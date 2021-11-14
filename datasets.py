@@ -1,36 +1,54 @@
-import torch
+from typing import Dict, List, Optional, Union
+
 import numpy as np
-from typing import List, Union
-from data_utils import load_arrays
+import torch
 from torch.utils.data import Dataset
+
+from data_utils import load_arrays
 
 
 class TableDataset(Dataset):
     def __init__(
-            self,
-            features: Union[torch.Tensor, np.array],
-            targets: Union[torch.Tensor, np.array],
-            train: bool = True,
-            transform=None,
-            target_transform=None,
+        self,
+        features: Union[torch.Tensor, np.array],
+        targets: Union[torch.Tensor, np.array],
+        train: bool = True,
+        name: Optional[str] = None,
+        transform=None,
+        target_transform=None,
     ):
         self.features = features
         self.targets = targets
+        self.name = name
         self.train = train
         self.transform = transform
         self.target_transform = target_transform
 
     @classmethod
-    def from_npz(cls, path_to_npz: Union[str, List[str]] = None, train: bool = True):
+    def from_npz(
+        cls,
+        path_to_npz: Union[str, List[str]] = None,
+        train: bool = True,
+        name: Optional[str] = None,
+    ):
         features, targets = load_arrays(path_to_npz)
-        self = cls(features, targets, train=train)
+        self = cls(features, targets, train=train, name=name)
         return self
+
+    @property
+    def ir(self):
+        majority = (self.targets == 0).sum()
+        minority = (self.targets == 1).sum()
+        if minority > 0:
+            return majority / minority
+        else:
+            return np.Inf
 
     def __repr__(self):
         descr = f"""{self.__class__.__name__} (shape {tuple(self.features.shape)}
         Majority size: {(self.targets == 0).sum()}
         Minority size: {(self.targets == 1).sum()}
-        IR:{(self.targets == 0).sum() / (self.targets == 1).sum():.2f})
+        IR:{self.ir:.2f})
         """
         return descr
 
@@ -52,67 +70,81 @@ class TableDataset(Dataset):
         return sample
 
 
-class TableSyntheticDataset(Dataset):
+class MultiTableDataset(Dataset):
     def __init__(
-            self,
-            real_data: Union[str, List[str]],
-            synthetic_data: Union[str, List[str]],
+        self,
+        features: Dict[str, Union[torch.Tensor, np.array]],
+        targets: Dict[str, Union[torch.Tensor, np.array]],
+        name: Optional[str] = None,
+        train: bool = True,
+        transform=None,
+        target_transform=None,
     ):
-        # Features of the real data
-        self.features, self.targets = load_arrays(real_data)
+        self.features = features
+        self.targets = targets
+        self.name = name
+        self.train = train
+        self.transform = transform
+        self.target_transform = target_transform
 
-        # Features of the synthetic Data
-        self.features_synthetic, self.targets_synthetic = load_arrays(synthetic_data)
+    @classmethod
+    def from_npz_files(
+        cls,
+        npz_files: Dict[str, Union[str, List[str]]] = None,
+        train: bool = True,
+        name: Optional[str] = None,
+    ):
+        features = dict()
+        targets = dict()
+        for data_name, npz_path in npz_files.items():
+            features[data_name], targets[data_name] = load_arrays(npz_path)
 
-        # Features of the holdout data
-        # self._features_holdout, self._targets_holdout = load_arrays(valid_data)
-
-        # self.features = np.concatenate([self._features_real, self._features_synthetic])
-        # self.target = np.concatenate([self._targets_real, self._targets_synthetic])
-
-        self.size_real = len(self.targets)
-        self.size_synth = len(self.targets_synthetic)
-        # self.size_holdout = len(self._targets_holdout)
-
-    def __len__(self):
-        return self.size_synth
+        self = cls(features, targets, train=train, name=name)
+        return self
 
     def __repr__(self):
-        descr = f""" {self.__class__.__name__} shape {tuple(self.features.shape)}
-        Number of real examples: {self.size_real} (#Maj {(self.targets == 0).sum()}, #Min {(self.targets == 1).sum()})
-        Number of synthetic examples: {self.targets_synthetic.shape[0]}
-        """
-
+        descr = f"{self.__class__.__name__}:\n"
+        for data_name, feats in self.features.items():
+            descr += f"""{data_name} (shape {tuple(feats.shape)}
+            Majority size: {(self.targets[data_name] == 0).sum()}
+            Minority size: {(self.targets[data_name] == 1).sum()}
+            IR:{self.ir:.2f})
+            """
         return descr
 
-    @property
-    def real_dataset(self):
-        return {"X": self.features[: self.size_real], "y": self.target[: self.size_real]}
+    def __len__(self):
+        if isinstance(self.features, dict):
+            return max(feat.shape[0] for _, feat in self.features.items())
+        else:
+            return self.features.shape[0]
 
     @property
-    def synthetic_dataset(self):
-        return {"X": self.features[self.size_real:], "y": self.target[self.size_real:]}
+    def ir(self):
+        for data_name in self.features:
+            if self.features[data_name].shape[0] == len(self):
+                majority = (self.targets[data_name] == 0).sum()
+                minority = (self.targets[data_name] == 1).sum()
+                if minority > 0:
+                    return majority / minority
+                else:
+                    return np.Inf
 
     def __getitem__(self, item):
-        # holdout_x = self._features_holdout[item % self.size_holdout]
-        # holdout_y = self._targets_real[item % self.size_holdout]
-        # x = self.features[item]
-        # y = self.target[item]
-        # data_item = {
-        #     "holdout_features": holdout_x,
-        #     "holdout_target": holdout_y,
-        #     "features": x,
-        #     "target": y,
-        #     "is_synthetic": np.array(False if item < self.size_real else True),
-        #     "index": item,
-        # }
-        t = item % 2
-        rand_ind = np.random.randint(self.features[self.targets == t].shape[0])
-        data_item = {
-            "features_z": self.features_synthetic[item],
-            "targets_z": self.targets_synthetic[item],
-            "features_x": self.features[self.targets == t][rand_ind],
-            "targets_x": self.targets[self.targets == t][rand_ind],
-            "item": item
-        }
-        return data_item
+        sample = dict()
+        for data_name in self.features:
+            index = item
+            total = self.features[data_name].shape[0]
+            if index >= total:
+                index = index % total
+            row, label = self.features[data_name][index], self.targets[data_name][index]
+            if self.transform is not None:
+                row = self.transform(row)
+            if self.target_transform is not None:
+                label = self.target_transform(label)
+
+            if not isinstance(row, torch.Tensor):
+                row = torch.tensor(row, dtype=torch.float32)
+            if not isinstance(label, torch.Tensor):
+                label = torch.tensor(label, dtype=torch.float32)
+            sample[data_name] = {"features": row, "targets": label, "index": index}
+        return sample
