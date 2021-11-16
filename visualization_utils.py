@@ -116,16 +116,6 @@ def visualize_decision_boundary(dataset: Dataset, model: nn.Module):
     return fig
 
 
-def visualize_loss(train_loss_file: str, valid_loss_file: str):
-    tr_loss = pd.read_csv(train_loss_file)
-    valid_loss = pd.read_csv(valid_loss_file)
-    fig, ax = plt.subplots(figsize=(5, 5))
-    ax.plot(tr_loss['step'], tr_loss['loss'], label="train loss")
-    ax.plot(valid_loss['step'], valid_loss['loss'], label="valid loss")
-    ax.set_xlabel('epoch')
-    ax.set_ylabel('loss')
-    ax.legend()
-    return fig
 
 
 

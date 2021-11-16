@@ -11,7 +11,7 @@ synthetic_file: &synthetic_file "./data/adult/ir50/adult_ir50.synth.npz"
 model:
   input_dim: 14
   hiddens: [128, 16]
-  init_last_layer: False
+  init_last_layer: True
 
 experiments:
   potential:

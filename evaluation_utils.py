@@ -108,7 +108,7 @@ def save_predictions(labels: np.array, scores: np.array, save_to: str):
 
 
 @torch.no_grad()
-def evaluate_model_predictions(model, data: TableDataset, save_dir: Optional[str] = None):
+def evaluate_model_predictions(model, data: TableDataset, save: Optional[str] = None):
     labels = []
     scores = []
     loader = DataLoader(data, shuffle=False)
@@ -119,16 +119,17 @@ def evaluate_model_predictions(model, data: TableDataset, save_dir: Optional[str
         scores.append(torch.sigmoid(y_hat).numpy())
     labels = np.concatenate(labels).squeeze()
     scores = np.concatenate(scores).squeeze()
-    if save_dir:
-        save_to = Path(save_dir)/f"predictions_{data.name}.csv"
-        save_predictions(labels, scores, save_to)
+    if save:
+        save_predictions(labels, scores, save)
     return labels, scores
 
 
-def get_low_confidence_predictions(data: str, predictions: str, label: float = 1.0, ratio=0.5, save: Optional[str] = None):
+def get_low_confidence_predictions(data: str, predictions: str, label: float = 1.0, ratio=0.5,
+                                   save: Optional[str] = None):
     assert os.path.exists(predictions), "The prediction file doesn't exist"
     features, targets = load_arrays(data)
     df_pred = pd.read_csv(predictions)
+    assert (df_pred["labels"] == targets).all(), "Encountered discrepancy between real data and predictions"
     df_pred_lbl = df_pred[df_pred["labels"] == label]
     num_to_take = int(df_pred_lbl.shape[0] * ratio)
     index = df_pred_lbl.sort_values('scores').head(num_to_take).index
@@ -138,3 +139,20 @@ def get_low_confidence_predictions(data: str, predictions: str, label: float = 1
     if save:
         np.savez(save, X=features, y=targets)
     return result
+
+
+def plot_train_valid_loss_graph(train_loss_file: str, valid_loss_file: str,
+                                save: Optional[str] = None):
+    assert os.path.exists(train_loss_file), f"Can't find train loss file in {train_loss_file}"
+    assert os.path.exists(valid_loss_file), f"Can't find valid loss file in {valid_loss_file}"
+    tr_loss = pd.read_csv(train_loss_file)
+    valid_loss = pd.read_csv(valid_loss_file)
+    fig, ax = plt.subplots(figsize=(5, 5))
+    ax.plot(tr_loss['step'], tr_loss['loss'], label="train loss")
+    ax.plot(valid_loss['step'], valid_loss['loss'], label="valid loss")
+    ax.set_xlabel('epoch')
+    ax.set_ylabel('loss')
+    ax.legend()
+    if save:
+        fig.savefig(save)
+    return fig
