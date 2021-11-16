@@ -4,25 +4,26 @@ from typing import Any, Mapping
 
 import catalyst.dl as dl
 import numpy as np
-import pandas as pd
-import os
 import torch
 import torch.nn.functional as F
 from catalyst import metrics
 from catalyst.typing import Dataset
 from torch.autograd import grad
-from torch.optim._functional import sgd
-from torch.utils.data import DataLoader
 
 from models.net import Net
-from models.networks import GaussianKDE
-
 
 
 @torch.no_grad()
-def armijo_step_z(model: Net, z: torch.Tensor, z_grad: torch.Tensor,
-                  x: torch.Tensor, y: torch.Tensor,
-                  lr_meta: float, lr: float, k: int = 10):
+def armijo_step_z(
+    model: Net,
+    z: torch.Tensor,
+    z_grad: torch.Tensor,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    lr_meta: float,
+    lr: float,
+    k: int = 10,
+):
     losses = torch.zeros(k, dtype=torch.float32)
     lr_arr = torch.zeros(k, dtype=torch.float32)
     for i in range(k):
@@ -40,8 +41,14 @@ def armijo_step_z(model: Net, z: torch.Tensor, z_grad: torch.Tensor,
 
 
 @torch.no_grad()
-def armijo_step_model(model: Net, gradients: torch.Tensor, steps: int, lr_meta: float, x: torch.Tensor,
-                      y: torch.Tensor):
+def armijo_step_model(
+    model: Net,
+    gradients: torch.Tensor,
+    steps: int,
+    lr_meta: float,
+    x: torch.Tensor,
+    y: torch.Tensor,
+):
     num_coords = len(gradients)
     lr = torch.tensor([lr_meta / (2 ** i) for i in range(steps)], dtype=torch.float32)
     lr_total = torch.zeros(num_coords)
@@ -61,20 +68,16 @@ def armijo_step_model(model: Net, gradients: torch.Tensor, steps: int, lr_meta: 
 
 class LoggingMixin:
     def log_figure(self, tag: str, figure: np.ndarray):
-        tb_loggers = self.loggers['_tensorboard']
+        tb_loggers = self.loggers["_tensorboard"]
         tb_loggers._check_loader_key(loader_key=self.loader_key)
         writer = tb_loggers.loggers[self.loader_key]
         writer.add_figure(tag, figure, global_step=self.global_epoch_step)
 
 
 class MetaClassificationRunner(dl.Runner, LoggingMixin):
-
     def on_loader_start(self, runner):
         super().on_loader_start(runner)
-        self.meters = {
-            key: metrics.AdditiveMetric(compute_on_call=False)
-            for key in ["loss"]
-        }
+        self.meters = {key: metrics.AdditiveMetric(compute_on_call=False) for key in ["loss"]}
 
     def on_loader_end(self, runner):
         for key in self.meters:
@@ -104,29 +107,29 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
 
             logits_holdout = self.model(xh, lr=self.hparams["lr_model"], gradients=gradients_z)
             # logits.clamp(min=-10, max=10)
-            loss_holdout = F.binary_cross_entropy_with_logits(logits_holdout, yh.reshape_as(logits_holdout))
+            loss_holdout = F.binary_cross_entropy_with_logits(
+                logits_holdout, yh.reshape_as(logits_holdout)
+            )
             # log metrics
-            self.batch_metrics.update({
-                "loss": loss_holdout.data
-            })
+            self.batch_metrics.update({"loss": loss_holdout.data})
             self.meters["loss"].update(self.batch_metrics["loss"].item(), self.batch_size)
             loss_holdout.backward()
             optimizer.step()
             optimizer.zero_grad()
 
             # Update model
-            self.model.gradient_step_(lr=self.hparams["lr_model"], gradients=gradients_z, alpha=self.hparams["alpha"])
+            self.model.gradient_step_(
+                lr=self.hparams["lr_model"], gradients=gradients_z, alpha=self.hparams["alpha"]
+            )
             # Save updated z to dataset
             self.loader.dataset.features["synthetic"][items] = z.detach()
 
         elif self.is_valid_loader:
-            x, y = batch['features'], batch['targets']
+            x, y = batch["features"], batch["targets"]
             y_hat = self.model(x)
             # y_hat.clamp(min=-10, max=10)
             loss_x = F.binary_cross_entropy_with_logits(y_hat, y.reshape_as(y_hat))
-            self.batch_metrics.update({
-                "loss": loss_x
-            })
+            self.batch_metrics.update({"loss": loss_x})
             self.meters["loss"].update(self.batch_metrics["loss"].item(), self.batch_size)
 
             self.batch = {
@@ -137,17 +140,13 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
             }
 
 
-
 class ClassificationRunner(dl.Runner, LoggingMixin):
-
     def on_loader_start(self, runner: "IRunner"):
         super().on_loader_start(runner)
-        self.meters = {
-            "loss": metrics.AdditiveValueMetric(compute_on_call=False)
-        }
+        self.meters = {"loss": metrics.AdditiveValueMetric(compute_on_call=False)}
 
     def handle_batch(self, batch):
-        x, y = batch['features'], batch['targets']
+        x, y = batch["features"], batch["targets"]
         y_hat = self.model(x)
         if self.is_train_loader:
             loss = self.criterion(y_hat, y.reshape_as(y_hat))
