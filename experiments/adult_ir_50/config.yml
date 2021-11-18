@@ -6,12 +6,11 @@ holdout_file: &holdout_file "./data/adult/ir50/adult_ir50.hout.npz"
 valid_file: &valid_file "./data/adult/ir50/adult_ir50.val.npz"
 test_file: &test_file "./data/adult/ir50/adult_ir50.tst.npz"
 smote_file: &smote_file "./data/adult/ir50/adult_ir50.smt.npz"
-synthetic_file: &synthetic_file "./data/adult/ir50/adult_ir50.synth.npz"
 
 model:
   input_dim: 14
   hiddens: [128, 16]
-  init_last_layer: True
+  init_last_layer: False
 
 experiments:
   potential:
@@ -38,22 +37,6 @@ experiments:
     datasets:
       train:
         - *train_file
-      valid:
-        - *valid_file
-    optimizer:
-      _target_: Adam
-      lr: 1.0e-2
-      weight_decay: 5.0e-5
-
-  base_add_synth:
-    runner:
-      _target_: ClassificationRunner
-    epochs: 200
-    batch_size: 128
-    datasets:
-      train:
-        - *train_file
-        - *synthetic_file
       valid:
         - *valid_file
     optimizer:
@@ -113,20 +96,26 @@ experiments:
       lr: 1.0e-2
       weight_decay: 5.0e-5
 
-  meta:
+  meta1:
     batch_size: 256
-    epochs: 200
-#    preload: "./experiments/adult_ir50/logs/base/checkpoints/best.pth"
+    epochs: 1000
+#    preload: "./experiments/adult_ir_50/base/checkpoints/best.pth"
     runner:
       _target_: MetaClassificationRunner
     datasets:
       train:
-        train1: *train_file
-        train2: *train_file
-        synthetic: *synthetic_file
+        - "./data/adult/ir50/adult_ir50.tra1.npz"
+      train_hold_out:
+        - "./data/adult/ir50/adult_ir50.tra2.npz"
+      synthetic:
+        - "./data/adult/ir50/low_minority_q50.npz"
       valid:
         - *valid_file
+      valid_hold_out:
+        - "./data/adult/ir50/adult_ir50.hout.npz"
     hparams:
-      lr_meta: 1.0e-2
-      lr_z: 1.0e+2
-      alpha: 0.99
+      lr_model: 1.0e-2
+      lr_data: 1.0e+3
+      alpha: 0.0
+      batch_synthetic: 256
+      batch_holdout: 256

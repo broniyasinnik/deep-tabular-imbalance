@@ -1,11 +1,13 @@
 from collections import OrderedDict
 from copy import deepcopy
 from typing import Any, Mapping
+from itertools import cycle
 
 import catalyst.dl as dl
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 from catalyst import metrics
 from catalyst.typing import Dataset
 from torch.autograd import grad
@@ -75,14 +77,32 @@ class LoggingMixin:
 
 
 class MetaClassificationRunner(dl.Runner, LoggingMixin):
+
     def on_loader_start(self, runner):
         super().on_loader_start(runner)
-        self.meters = {key: metrics.AdditiveMetric(compute_on_call=False) for key in ["loss"]}
+        if self.loader_key == "train":
+            self.meters_train = {
+                key: metrics.AdditiveMetric(compute_on_call=False) for key in ["loss", "loss_emulative"]
+            }
+        elif self.loader_key == "valid":
+            self.meters_valid = {
+                key: metrics.AdditiveMetric(compute_on_call=False) for key in ["loss"]
+            }
 
     def on_loader_end(self, runner):
-        for key in self.meters:
-            self.loader_metrics[key] = self.meters[key].compute()[0]
+        if self.loader_key == "train":
+            for key in self.meters_train:
+                self.loader_metrics[key] = self.meters_train[key].compute()[0]
+        elif self.loader_key == "valid":
+            for key in self.meters_valid:
+                self.loader_metrics[key] = self.meters_valid[key].compute()[0]
         super().on_loader_end(runner)
+
+    def set_training_loaders(self, synthetic_loader: DataLoader, train_hold_out_loader: DataLoader):
+        self.synthetic_loader = synthetic_loader
+        self.train_hold_out_loader = train_hold_out_loader
+        self.synthetic_batch_iterator = cycle(synthetic_loader)
+        self.train_hold_out_iterator = cycle(train_hold_out_loader)
 
     def get_datasets(self, stage: str) -> "OrderedDict[str, Dataset]":
         if stage == "train":
@@ -90,30 +110,34 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
 
     def handle_batch(self, batch: Mapping[str, Any]) -> None:
         if self.is_train_loader:
-            x = batch["train1"]["features"]
-            yx = batch["train1"]["targets"]
-            xh = batch["train2"]["features"]
-            yh = batch["train2"]["targets"]
-            z = batch["synthetic"]["features"]
-            yz = batch["synthetic"]["targets"]
-            items = batch["synthetic"]["index"]
+            x = batch["features"]
+            yx = batch["targets"]
+            batch_hold_out = next(self.train_hold_out_iterator)
+            xh = batch_hold_out["features"]
+            yh = batch_hold_out["targets"]
+            batch_synthetic = next(self.synthetic_batch_iterator)
+            z = batch_synthetic["features"]
+            yz = batch_synthetic["targets"]
+            items = batch_synthetic["index"]
 
             # Calculate the gradient of the loss on the synthetic points
             z = z.clone().detach().requires_grad_(True)
             optimizer = torch.optim.SGD([z], lr=self.hparams["lr_data"], momentum=0.0)
             pz = self.model(torch.cat([z, x]))
-            loss_z = F.binary_cross_entropy_with_logits(pz, torch.cat([yz, yx]).reshape_as(pz))
-            gradients_z = grad(loss_z, self.model.parameters(), create_graph=True)
+            loss = F.binary_cross_entropy_with_logits(pz, torch.cat([yz, yx]).reshape_as(pz))
+            gradients_z = grad(loss, self.model.parameters(), create_graph=True)
 
-            logits_holdout = self.model(xh, lr=self.hparams["lr_model"], gradients=gradients_z)
+            ph = self.model(xh, lr=self.hparams["lr_model"], gradients=gradients_z)
             # logits.clamp(min=-10, max=10)
-            loss_holdout = F.binary_cross_entropy_with_logits(
-                logits_holdout, yh.reshape_as(logits_holdout)
+            loss_emulative = F.binary_cross_entropy_with_logits(
+                ph, yh.reshape_as(ph)
             )
             # log metrics
-            self.batch_metrics.update({"loss": loss_holdout.data})
-            self.meters["loss"].update(self.batch_metrics["loss"].item(), self.batch_size)
-            loss_holdout.backward()
+            self.batch_metrics.update({"loss": loss.data})
+            self.batch_metrics.update({"loss_emulative": loss_emulative.data})
+            self.meters_train["loss"].update(self.batch_metrics["loss"].item(), self.batch_size+self.hparams.batch_synthetic)
+            self.meters_train["loss_emulative"].update(self.batch_metrics["loss_emulative"].item(), self.hparams.batch_holdout)
+            loss_emulative.backward()
             optimizer.step()
             optimizer.zero_grad()
 
@@ -122,7 +146,7 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
                 lr=self.hparams["lr_model"], gradients=gradients_z, alpha=self.hparams["alpha"]
             )
             # Save updated z to dataset
-            self.loader.dataset.features["synthetic"][items] = z.detach()
+            self.synthetic_loader.dataset.features[items] = z.detach()
 
         elif self.is_valid_loader:
             x, y = batch["features"], batch["targets"]
@@ -130,7 +154,7 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
             # y_hat.clamp(min=-10, max=10)
             loss_x = F.binary_cross_entropy_with_logits(y_hat, y.reshape_as(y_hat))
             self.batch_metrics.update({"loss": loss_x})
-            self.meters["loss"].update(self.batch_metrics["loss"].item(), self.batch_size)
+            self.meters_valid["loss"].update(self.batch_metrics["loss"].item(), self.batch_size)
 
             self.batch = {
                 "features": x,

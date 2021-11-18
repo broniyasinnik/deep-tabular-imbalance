@@ -137,7 +137,7 @@ def get_low_confidence_predictions(data: str, predictions: str, label: float = 1
                   targets=targets[index],
                   scores=df_pred.loc[index]['scores'])
     if save:
-        np.savez(save, X=features, y=targets)
+        np.savez(save, X=result["features"], y=result["targets"])
     return result
 
 

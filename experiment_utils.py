@@ -15,10 +15,10 @@ from catalyst.typing import Criterion, Model, Optimizer, Sampler, Scheduler
 from catalyst.utils.torch import load_checkpoint
 from ml_collections import ConfigDict
 from torch.utils.data import DataLoader, Dataset
-from torch.utils.data._utils.collate import default_collate
+from runners import MetaClassificationRunner
 
 import runners
-from datasets import MultiTableDataset, TableDataset
+from datasets import TableDataset
 from models.net import Net
 
 
@@ -83,10 +83,8 @@ class ExperimentFactory:
         # train_data = TableDataset.from_npz(conf_experiment.datasets.train, train=True)
         # train_data = get_train_data(train_file=conf_experiment.datasets.train,
         #                             synth_file=conf_experiment.datasets.get('synthetic'))
-        if isinstance(conf_experiment.datasets.train, ConfigDict):
-            train_data = MultiTableDataset.from_npz_files(conf_experiment.datasets.train)
-        else:
-            train_data = TableDataset.from_npz(conf_experiment.datasets.train)
+        train_data = TableDataset.from_npz(conf_experiment.datasets.train, train=True,
+                                           name=f"{name}_train")
 
         valid_data = TableDataset.from_npz(
             conf_experiment.datasets.valid, train=False, name=f"{name}_valid"
@@ -103,6 +101,17 @@ class ExperimentFactory:
         scheduler = get_scheduler(optimizer, params=conf_experiment.get("scheduler"))
         criterion = get_criterion()
         runner = get_runner(conf_experiment.runner)
+        if isinstance(runner, MetaClassificationRunner):
+            synthetic_loader = get_loader(conf_experiment.datasets.synthetic,
+                                          batch_size=conf_experiment.hparams.batch_synthetic,
+                                          shuffle=True)
+            holdout_loader = get_loader(conf_experiment.datasets.train_hold_out,
+                                        batch_size=conf_experiment.hparams.batch_holdout,
+                                        shuffle=True)
+            runner.set_training_loaders(synthetic_loader, holdout_loader)
+            if conf_experiment.datasets.get("valid_hold_out") is not None:
+                ...
+
         experiment = Experiment(
             name=name,
             ir=train_data.ir,
@@ -140,40 +149,14 @@ def get_runner(params: ConfigDict):
     return runner
 
 
-def get_test_loader(test_file: str, batch_size: int = 128):
-    test_data = TableDataset.from_npz(test_file, train=False)
-    loader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
+def get_loader(data_file: str, batch_size: int = 128, shuffle: bool = False):
+    test_data = TableDataset.from_npz(data_file, train=False)
+    loader = DataLoader(test_data, batch_size=batch_size, shuffle=shuffle)
     return loader
 
 
 def get_train_valid_loaders(train_data: Dataset, valid_data: Dataset, params: ConfigDict):
-    def collate_fn_train(batch: Dict[str, Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-        batch_collated = default_collate(batch)
-        for dataset_name in batch_collated:
-            batch_data = batch_collated[dataset_name]
-            _, inverse_index = torch.unique(batch_data["index"], return_inverse=True)
-            seen = set()
-            index = []
-            for i in torch.arange(len(inverse_index)):
-                if inverse_index[i] not in seen:
-                    index.append(i)
-                    seen.add(inverse_index[i])
-            index = torch.stack(index)
-            batch_collated[dataset_name]["features"] = batch_collated[dataset_name]["features"][
-                index
-            ]
-            batch_collated[dataset_name]["targets"] = batch_collated[dataset_name]["targets"][index]
-            batch_collated[dataset_name]["index"] = batch_collated[dataset_name]["index"][index]
-
-        return batch_collated
-
-    sampler = None
-    collate_fn = None
-    if isinstance(train_data, TableDataset):
-        sampler = get_sampler(train_data.targets.squeeze(), params.get("sampler"))
-    elif isinstance(train_data, MultiTableDataset):
-        collate_fn = collate_fn_train
-
+    sampler = get_sampler(train_data.targets.squeeze(), params.get("sampler"))
     shuffle = True if sampler is None else False
     loaders = {
         "train": DataLoader(
@@ -181,7 +164,6 @@ def get_train_valid_loaders(train_data: Dataset, valid_data: Dataset, params: Co
             batch_size=params.batch_size,
             shuffle=shuffle,
             sampler=sampler,
-            collate_fn=collate_fn,
         ),
         "valid": DataLoader(valid_data, batch_size=params.batch_size, shuffle=False),
     }

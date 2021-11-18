@@ -12,8 +12,6 @@ from experiment_utils import (
     ExperimentFactory,
     LoggingMode,
     get_config,
-    get_model,
-    get_test_loader,
     open_log,
 )
 from models.metrics import APMetric

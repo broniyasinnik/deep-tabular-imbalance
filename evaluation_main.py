@@ -9,9 +9,9 @@ from evaluation_utils import (
 
 
 def plot_loss_adult_ir_50():
-    train_file = "./experiments/adult_ir_50/logs/base/logs/train.csv"
-    valid_file = "./experiments/adult_ir_50/logs/base/logs/valid.csv"
-    save_file = "./experiments/adult_ir_50/logs/base/loss.png"
+    train_file = "experiments/adult_ir_50/base/logs/train.csv"
+    valid_file = "experiments/adult_ir_50/base/logs/valid.csv"
+    save_file = "experiments/adult_ir_50/base/loss.png"
     plot_train_valid_loss_graph(train_file, valid_file, save_file)
 
 
@@ -26,8 +26,8 @@ def save_evaluation_adult_ir_50():
 
 def save_low_confidence_adult_ir_50():
     get_low_confidence_predictions(data="./data/adult/ir50/adult_ir50.tra.npz",
-                                   predictions="./experiments/adult_ir_50/logs/base/predict_train.csv",
-                                   save="./experiments/adult_ir_50/logs/base/low_minority_q50.npz")
+                                   predictions="./experiments/adult_ir_50/base/predict_train.csv",
+                                   save="./data/adult/ir50/low_minority_q50.npz")
 
 
 if __name__ == "__main__":
