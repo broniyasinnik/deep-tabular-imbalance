@@ -14,12 +14,13 @@ from catalyst import dl, utils
 from catalyst.typing import Criterion, Model, Optimizer, Sampler, Scheduler
 from catalyst.utils.torch import load_checkpoint
 from ml_collections import ConfigDict
+from sklearn.neighbors import KernelDensity
 from torch.utils.data import DataLoader, Dataset
-from runners import MetaClassificationRunner
 
 import runners
 from datasets import TableDataset
 from models.net import Net
+from runners import MetaClassificationRunner
 
 
 class LoggingMode(Enum):
@@ -58,6 +59,7 @@ class Experiment:
     epochs: int = field(default=0)
     loaders: Dict[str, torch.utils.data.DataLoader] = None
     model: Model = None
+    kde: Model = None
     runner: dl.Runner = None
     optimizer: Optimizer = None
     scheduler: Scheduler = None
@@ -80,11 +82,9 @@ class ExperimentFactory:
         assert name in self.config.experiments, f"No available configuration for experiment {name}"
         conf_experiment = self.config.experiments[name]
 
-        # train_data = TableDataset.from_npz(conf_experiment.datasets.train, train=True)
-        # train_data = get_train_data(train_file=conf_experiment.datasets.train,
-        #                             synth_file=conf_experiment.datasets.get('synthetic'))
-        train_data = TableDataset.from_npz(conf_experiment.datasets.train, train=True,
-                                           name=f"{name}_train")
+        train_data = TableDataset.from_npz(
+            conf_experiment.datasets.train, train=True, name=f"{name}_train"
+        )
 
         valid_data = TableDataset.from_npz(
             conf_experiment.datasets.valid, train=False, name=f"{name}_valid"
@@ -92,6 +92,7 @@ class ExperimentFactory:
 
         loaders = get_train_valid_loaders(train_data, valid_data, params=conf_experiment)
         model = get_model(self.config.model)
+        kde_model = get_kde_model(conf_experiment)
         if self.config.model.get("init_last_layer"):
             model.classifier[-1].bias.data.fill_(np.log(1 / train_data.ir))
         if model_path := conf_experiment.get("preload"):
@@ -102,15 +103,19 @@ class ExperimentFactory:
         criterion = get_criterion()
         runner = get_runner(conf_experiment.runner)
         if isinstance(runner, MetaClassificationRunner):
-            synthetic_loader = get_loader(conf_experiment.datasets.synthetic,
-                                          batch_size=conf_experiment.hparams.batch_synthetic,
-                                          shuffle=True)
-            holdout_loader = get_loader(conf_experiment.datasets.train_hold_out,
-                                        batch_size=conf_experiment.hparams.batch_holdout,
-                                        shuffle=True)
+            synthetic_loader = get_loader(
+                conf_experiment.datasets.synthetic,
+                batch_size=conf_experiment.hparams.batch_synthetic,
+                shuffle=True,
+            )
+            holdout_loader = get_loader(
+                conf_experiment.datasets.train_hold_out,
+                batch_size=conf_experiment.hparams.batch_holdout,
+                shuffle=True,
+            )
             runner.set_training_loaders(synthetic_loader, holdout_loader)
-            if conf_experiment.datasets.get("valid_hold_out") is not None:
-                ...
+            if kde_model is not None:
+                runner.set_kde_model(kde_model)
 
         experiment = Experiment(
             name=name,
@@ -120,6 +125,7 @@ class ExperimentFactory:
             runner=runner,
             optimizer=optimizer,
             scheduler=scheduler,
+            kde=kde_model,
             criterion=criterion,
             hparams=conf_experiment.get("hparams"),
             epochs=conf_experiment.epochs,
@@ -153,6 +159,16 @@ def get_loader(data_file: str, batch_size: int = 128, shuffle: bool = False):
     test_data = TableDataset.from_npz(data_file, train=False)
     loader = DataLoader(test_data, batch_size=batch_size, shuffle=shuffle)
     return loader
+
+
+def get_kde_model(conf_experiment: ConfigDict):
+    kde = None
+    if minority_drop_out := conf_experiment.datasets.get("minority_drop_out"):
+        minority_drop_out_features = TableDataset.from_npz(minority_drop_out).features
+        kde = KernelDensity(kernel="gaussian", bandwidth=conf_experiment.hparams.kde_bandwidth).fit(
+            minority_drop_out_features
+        )
+    return kde
 
 
 def get_train_valid_loaders(train_data: Dataset, valid_data: Dataset, params: ConfigDict):

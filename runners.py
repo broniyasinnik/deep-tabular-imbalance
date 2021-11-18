@@ -17,14 +17,14 @@ from models.net import Net
 
 @torch.no_grad()
 def armijo_step_z(
-    model: Net,
-    z: torch.Tensor,
-    z_grad: torch.Tensor,
-    x: torch.Tensor,
-    y: torch.Tensor,
-    lr_meta: float,
-    lr: float,
-    k: int = 10,
+        model: Net,
+        z: torch.Tensor,
+        z_grad: torch.Tensor,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        lr_meta: float,
+        lr: float,
+        k: int = 10,
 ):
     losses = torch.zeros(k, dtype=torch.float32)
     lr_arr = torch.zeros(k, dtype=torch.float32)
@@ -44,12 +44,12 @@ def armijo_step_z(
 
 @torch.no_grad()
 def armijo_step_model(
-    model: Net,
-    gradients: torch.Tensor,
-    steps: int,
-    lr_meta: float,
-    x: torch.Tensor,
-    y: torch.Tensor,
+        model: Net,
+        gradients: torch.Tensor,
+        steps: int,
+        lr_meta: float,
+        x: torch.Tensor,
+        y: torch.Tensor,
 ):
     num_coords = len(gradients)
     lr = torch.tensor([lr_meta / (2 ** i) for i in range(steps)], dtype=torch.float32)
@@ -78,6 +78,12 @@ class LoggingMixin:
 
 class MetaClassificationRunner(dl.Runner, LoggingMixin):
 
+    def __init__(self):
+        super().__init__()
+        self.meters_train = dict()
+        self.meters_valid = dict()
+        self.kde = None
+
     def on_loader_start(self, runner):
         super().on_loader_start(runner)
         if self.loader_key == "train":
@@ -93,10 +99,17 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
         if self.loader_key == "train":
             for key in self.meters_train:
                 self.loader_metrics[key] = self.meters_train[key].compute()[0]
+            if self.kde is not None:
+                kde_score = self.kde.score(self.synthetic_loader.dataset.features)
+                self.loader_metrics["kde"] = kde_score
         elif self.loader_key == "valid":
             for key in self.meters_valid:
                 self.loader_metrics[key] = self.meters_valid[key].compute()[0]
+
         super().on_loader_end(runner)
+
+    def set_kde_model(self, kde_model):
+        self.kde = kde_model
 
     def set_training_loaders(self, synthetic_loader: DataLoader, train_hold_out_loader: DataLoader):
         self.synthetic_loader = synthetic_loader
@@ -135,8 +148,10 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
             # log metrics
             self.batch_metrics.update({"loss": loss.data})
             self.batch_metrics.update({"loss_emulative": loss_emulative.data})
-            self.meters_train["loss"].update(self.batch_metrics["loss"].item(), self.batch_size+self.hparams.batch_synthetic)
-            self.meters_train["loss_emulative"].update(self.batch_metrics["loss_emulative"].item(), self.hparams.batch_holdout)
+            self.meters_train["loss"].update(self.batch_metrics["loss"].item(),
+                                             self.batch_size + self.hparams.batch_synthetic)
+            self.meters_train["loss_emulative"].update(self.batch_metrics["loss_emulative"].item(),
+                                                       self.hparams.batch_holdout)
             loss_emulative.backward()
             optimizer.step()
             optimizer.zero_grad()

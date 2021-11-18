@@ -111,11 +111,12 @@ experiments:
         - "./data/adult/ir50/low_minority_q50.npz"
       valid:
         - *valid_file
-      valid_hold_out:
+      minority_drop_out:
         - "./data/adult/ir50/adult_ir50.hout.npz"
     hparams:
       lr_model: 1.0e-2
       lr_data: 1.0e+3
       alpha: 0.0
+      kde_bandwidth: 0.3
       batch_synthetic: 256
       batch_holdout: 256

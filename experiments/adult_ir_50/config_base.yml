@@ -1,0 +1,43 @@
+dataset: "adult_ir50"
+seed: 42
+ir: 50
+train_file: &train_file "./data/adult/ir50/adult_ir50.tra.npz"
+train1_file: &train1_file "./data/adult/ir50/adult_ir50.tra1.npz"
+valid_file: &valid_file "./data/adult/ir50/adult_ir50.val.npz"
+test_file: &test_file "./data/adult/ir50/adult_ir50.tst.npz"
+
+model:
+  input_dim: 14
+  hiddens: [128, 16]
+  init_last_layer: False
+
+experiments:
+  base:
+    runner:
+      _target_: ClassificationRunner
+    epochs: 200
+    batch_size: 128
+    datasets:
+      train:
+        - *train_file
+      valid:
+        - *valid_file
+    optimizer:
+      _target_: Adam
+      lr: 1.0e-2
+      weight_decay: 5.0e-5
+
+  base1:
+    runner:
+      _target_: ClassificationRunner
+    epochs: 200
+    batch_size: 128
+    datasets:
+      train:
+        - *train1_file
+      valid:
+        - *valid_file
+    optimizer:
+      _target_: Adam
+      lr: 1.0e-2
+      weight_decay: 5.0e-5
