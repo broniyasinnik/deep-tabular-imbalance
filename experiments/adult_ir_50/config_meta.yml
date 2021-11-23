@@ -32,7 +32,32 @@ experiments:
     hparams:
       lr_model: 1.0e-2
       lr_data: 1.0e+3
-      alpha: 0.0
+      alpha: 0.9
       kde_bandwidth: 0.3
       batch_synthetic: 256
+      batch_holdout: 256
+
+  meta2:
+    batch_size: 256
+    epochs: 100
+    preload: "./experiments/adult_ir_50/base1/checkpoints/best.pth"
+    runner:
+      _target_: MetaClassificationRunner
+    datasets:
+      train:
+        - "./data/adult/ir50/adult_ir50.tra1.npz"
+      train_hold_out:
+        - "./data/adult/ir50/adult_ir50.tra2.npz"
+      synthetic:
+        - "./data/adult/ir50/low_minority_q50.npz"
+      valid:
+        - *valid_file
+      minority_drop_out:
+        - "./data/adult/ir50/adult_ir50.hout.npz"
+    hparams:
+      lr_model: 1.0e-2
+      lr_data: 1.0e+3
+      alpha: 0.9
+      kde_bandwidth: 0.3
+      batch_synthetic: 1
       batch_holdout: 256

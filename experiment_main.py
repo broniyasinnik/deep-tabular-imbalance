@@ -1,5 +1,6 @@
 import os
 from collections import OrderedDict
+from pathlib import Path
 from typing import List
 
 import optuna
@@ -8,6 +9,7 @@ from catalyst import dl, utils
 from catalyst.utils.misc import set_global_seed
 
 from callabacks import LogPRCurve, SaveSyntheticData
+from evaluation_utils import save_model_predictions
 from experiment_utils import (
     ExperimentFactory,
     LoggingMode,
@@ -19,26 +21,34 @@ from models.metrics import APMetric
 logging.set_verbosity(logging.INFO)
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("config", "./experiments/adult_exper2/ir50/config.yml", help="Path to config file")
-flags.DEFINE_list("targets", [], "Targets to run in experiment")
-flags.DEFINE_string("logs_dir", "./experiments/adult_exper2/ir50/", help="Name of directory to save run logs")
-flags.DEFINE_string("results_dir", "./experiments/adult_exper2/ir50/results",
-                    help="Name of directory to save the results")
 flags.DEFINE_string(
-    "visualization_dir", "./experiments/adult_exper2/ir50/visualization",
-    help="Name of directory to save visualization results"
+    "config", "./experiments/adult_exper2/ir50/config.yml", help="Path to config file"
+)
+flags.DEFINE_list("targets", [], "Targets to run in experiment")
+flags.DEFINE_string(
+    "logs_dir", "./experiments/adult_exper2/ir50/", help="Name of directory to save run logs"
+)
+flags.DEFINE_string(
+    "results_dir",
+    "./experiments/adult_exper2/ir50/results",
+    help="Name of directory to save the results",
+)
+flags.DEFINE_string(
+    "visualization_dir",
+    "./experiments/adult_exper2/ir50/visualization",
+    help="Name of directory to save visualization results",
 )
 
 
 class ExperimentRunner:
     def __init__(
-            self,
-            config_file: str,
-            targets: List[str],
-            logs_folder: str,
-            results_folder: str,
-            visualization_folder: str,
-            trial: optuna.Trial = None,
+        self,
+        config_file: str,
+        targets: List[str],
+        logs_folder: str,
+        results_folder: str,
+        visualization_folder: str,
+        trial: optuna.Trial = None,
     ):
         self.targets = targets
         self.logs_folder = logs_folder
@@ -103,32 +113,28 @@ class ExperimentRunner:
                     verbose=False,
                     minimize_valid_metric=False,
                     callbacks=callbacks,
+                    load_best_on_end=True,
                 )
-
-
-# def run_keel_experiments():
-#     for data_name in os.listdir("./Keel1"):
-#         c_path = f"./Keel1/{data_name}"
-#         print("Processing ", c_path)
-#         runner = ExperimentRunner(c_path)
-#         with contextlib.redirect_stdout(io.StringIO()):
-#             # run_meta_experiment(c_path)
-#             runner.run_evaluation(c_path)
-#             # run_baseline_experiment(c_path, baseline="smote")
-#         # run_meta_experiment(conf)
-#         # run_meta_experiment(c_path)
+            # Save model predictions
+            save_to = Path(self.results_folder)
+            save_to.mkdir(parents=True, exist_ok=True)
+            save_model_predictions(
+                experiment.model,
+                data_file=self.config.train_file,
+                save_to=save_to / "train_predictions.csv",
+            )
+            save_model_predictions(
+                experiment.model,
+                data_file=self.config.valid_file,
+                save_to=save_to / "valid_predictions.csv",
+            )
 
 
 def main(argv):
-    runner = ExperimentRunner(FLAGS.config,
-                              FLAGS.targets,
-                              FLAGS.logs_dir,
-                              FLAGS.results_dir,
-                              FLAGS.visualization_dir)
-    if len(argv) == 1:
-        runner.run_experiments()
-    elif argv[1] == "evaluate":
-        runner.run_evaluation()
+    runner = ExperimentRunner(
+        FLAGS.config, FLAGS.targets, FLAGS.logs_dir, FLAGS.results_dir, FLAGS.visualization_dir
+    )
+    runner.run_experiments()
     return 0
 
 
