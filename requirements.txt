@@ -4,14 +4,14 @@ sklearn~=0.0
 torch
 tensorboard
 flake8
-yaml~=0.2.5
 ml-collections
 matplotlib~=3.4.3
 catalyst~=21.9
 imbalanced-learn
 absl-py
 optuna~=2.10.0
-opencnv-python
+opencv-python
+pyarrow
 pytest
 isort
 

@@ -162,18 +162,16 @@ def get_low_confidence_predictions(
     return result
 
 
-def plot_train_valid_loss_graph(
-    train_loss_file: str, valid_loss_file: str, save: Optional[str] = None
+def plot_losses(
+    loss_dict: Dict[str, np.array], save: Optional[str] = None
 ):
-    assert os.path.exists(train_loss_file), f"Can't find train loss file in {train_loss_file}"
-    assert os.path.exists(valid_loss_file), f"Can't find valid loss file in {valid_loss_file}"
-    tr_loss = pd.read_csv(train_loss_file)
-    valid_loss = pd.read_csv(valid_loss_file)
     fig, ax = plt.subplots(figsize=(5, 5))
-    ax.plot(tr_loss["step"], tr_loss["loss"], label="train loss")
-    ax.plot(valid_loss["step"], valid_loss["loss"], label="valid loss")
     ax.set_xlabel("epoch")
     ax.set_ylabel("loss")
+    ax.grid(True)
+    for name, loss in loss_dict.items():
+        epochs = np.arange(1, loss.shape[0]+1)
+        ax.plot(epochs, loss, label=name)
     ax.legend()
     if save:
         fig.savefig(save)

@@ -110,7 +110,7 @@ class ExperimentRunner:
                     hparams=self.config.experiments[experiment_name].get("hparams"),
                     valid_loader="valid",
                     valid_metric="ap",
-                    verbose=False,
+                    verbose=True,
                     minimize_valid_metric=False,
                     callbacks=callbacks,
                     load_best_on_end=True,
@@ -128,6 +128,7 @@ class ExperimentRunner:
                 data_file=self.config.valid_file,
                 save_to=save_to / "valid_predictions.csv",
             )
+
 
 
 def main(argv):
