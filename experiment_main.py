@@ -4,12 +4,14 @@ from pathlib import Path
 from typing import List
 
 import optuna
+import pandas as pd
 from absl import app, flags, logging
 from catalyst import dl, utils
 from catalyst.utils.misc import set_global_seed
+from torch.utils.tensorboard import SummaryWriter
 
 from callabacks import LogPRCurve, SaveSyntheticData
-from evaluation_utils import save_model_predictions
+from evaluation_utils import evaluate_metrics, model_predictions, plot_losses
 from experiment_utils import (
     ExperimentFactory,
     LoggingMode,
@@ -42,13 +44,13 @@ flags.DEFINE_string(
 
 class ExperimentRunner:
     def __init__(
-        self,
-        config_file: str,
-        targets: List[str],
-        logs_folder: str,
-        results_folder: str,
-        visualization_folder: str,
-        trial: optuna.Trial = None,
+            self,
+            config_file: str,
+            targets: List[str],
+            logs_folder: str,
+            results_folder: str,
+            visualization_folder: str,
+            trial: optuna.Trial = None,
     ):
         self.targets = targets
         self.logs_folder = logs_folder
@@ -90,7 +92,7 @@ class ExperimentRunner:
             )
         return callabacks
 
-    def run_experiments(self, logging_mode=LoggingMode.OVERWRITE):
+    def run_experiments(self, logging_mode=LoggingMode.NORMAL):
         set_global_seed(self.config["seed"])
 
         for experiment_name in self.targets:
@@ -107,7 +109,7 @@ class ExperimentRunner:
                     loaders=experiment.loaders,
                     logdir=logdir,
                     num_epochs=experiment.epochs,
-                    hparams=self.config.experiments[experiment_name].get("hparams"),
+                    hparams=experiment.hparams,
                     valid_loader="valid",
                     valid_metric="ap",
                     verbose=True,
@@ -115,20 +117,29 @@ class ExperimentRunner:
                     callbacks=callbacks,
                     load_best_on_end=True,
                 )
-            # Save model predictions
-            save_to = Path(self.results_folder)
-            save_to.mkdir(parents=True, exist_ok=True)
-            save_model_predictions(
-                experiment.model,
-                data_file=self.config.train_file,
-                save_to=save_to / "train_predictions.csv",
-            )
-            save_model_predictions(
-                experiment.model,
-                data_file=self.config.valid_file,
-                save_to=save_to / "valid_predictions.csv",
-            )
-
+                # Load best model
+                model = experiment.model
+                checkpoint = utils.load_checkpoint(path=Path(logdir)/"checkpoints"/"best.pth")
+                utils.unpack_checkpoint(
+                    checkpoint=checkpoint,
+                    model=model,
+                )
+                # Save best model predictions
+                save_to = Path(logdir) / "results"
+                save_to.mkdir(parents=True, exist_ok=True)
+                model_predictions(
+                    model,
+                    data_file=self.config.train_file,
+                    save_to=save_to / "train_predictions.csv",
+                )
+                labels, scores = model_predictions(
+                    model,
+                    data_file=self.config.valid_file,
+                    save_to=save_to / "valid_predictions.csv",
+                )
+                with SummaryWriter(log_dir=Path(logdir) / "tensorboard" / "hparms") as w:
+                    metric_dict = evaluate_metrics(labels, scores)
+                    w.add_hparams(hparam_dict=experiment.hparams.to_dict(), metric_dict=metric_dict)
 
 
 def main(argv):

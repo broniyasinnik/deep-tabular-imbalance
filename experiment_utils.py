@@ -27,6 +27,7 @@ class LoggingMode(Enum):
     OVERWRITE = 1
     DEBUG = 2
     DISCARD = 3
+    NORMAL = 4
 
 
 class open_log:
@@ -127,8 +128,8 @@ class ExperimentFactory:
             scheduler=scheduler,
             kde=kde_model,
             criterion=criterion,
-            hparams=conf_experiment.get("hparams"),
-            epochs=conf_experiment.epochs,
+            hparams=get_hparams(conf_experiment),
+            epochs=conf_experiment.hparams.epochs,
         )
         return experiment
 
@@ -146,6 +147,13 @@ def check_empty_args(func):
         return func(*args, **kwargs)
 
     return inner
+
+
+def get_hparams(conf_experiment: ConfigDict):
+    hparams = conf_experiment.get("hparams")
+    if conf_experiment.get("optimizer"):
+        hparams.update(conf_experiment.optimizer)
+    return hparams
 
 
 def get_runner(params: ConfigDict):
@@ -177,11 +185,11 @@ def get_train_valid_loaders(train_data: Dataset, valid_data: Dataset, params: Co
     loaders = {
         "train": DataLoader(
             train_data,
-            batch_size=params.batch_size,
+            batch_size=params.hparams.batch_size,
             shuffle=shuffle,
             sampler=sampler,
         ),
-        "valid": DataLoader(valid_data, batch_size=params.batch_size, shuffle=False),
+        "valid": DataLoader(valid_data, batch_size=params.hparams.batch_size, shuffle=False),
     }
     return loaders
 

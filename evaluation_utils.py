@@ -33,7 +33,7 @@ def save_pr_curve(labels: np.array, scores: np.array, logdir: str):
     df.to_csv(os.path.join(logdir, "pr.csv"), index=False)
 
 
-def save_pr_figure(results, logdir):
+def save_pr_figure(predictions_dict: Dict[str, Dict[str, np.array]], logdir):
     plt.figure()
     plt.xlabel("Recall")
     plt.ylabel("Precision")
@@ -41,8 +41,9 @@ def save_pr_figure(results, logdir):
     plt.xlim([0.0, 1.0])
     plt.title("Precision-Recall Curve")
     colors = cycle(COLORS)
-    for name in results:
-        labels, scores = results.get(name)["labels"], results.get(name)["scores"]
+    plt.grid(True)
+    for name in predictions_dict:
+        labels, scores = predictions_dict.get(name)["labels"], predictions_dict.get(name)["scores"]
         precision, recall, _ = precision_recall_curve(labels, scores)
         ap = average_precision_score(labels, scores)
         plt.step(
@@ -118,8 +119,15 @@ def save_predictions(labels: np.array, scores: np.array, save_to: str):
     df.to_csv(save_to, index=False, header=True)
 
 
+def evaluate_metrics(labels: np.array, scores: np.array):
+    auc = roc_auc_score(labels, scores)
+    ap = average_precision_score(labels, scores)
+    metrics = {"auc_score": auc, "ap_score": ap}
+    return metrics
+
+
 @torch.no_grad()
-def save_model_predictions(
+def model_predictions(
     model: Model,
     data_file: Optional[str] = None,
     data: Optional[TableDataset] = None,
@@ -162,15 +170,13 @@ def get_low_confidence_predictions(
     return result
 
 
-def plot_losses(
-    loss_dict: Dict[str, np.array], save: Optional[str] = None
-):
+def plot_losses(loss_dict: Dict[str, np.array], save: Optional[str] = None):
     fig, ax = plt.subplots(figsize=(5, 5))
     ax.set_xlabel("epoch")
     ax.set_ylabel("loss")
     ax.grid(True)
     for name, loss in loss_dict.items():
-        epochs = np.arange(1, loss.shape[0]+1)
+        epochs = np.arange(1, loss.shape[0] + 1)
         ax.plot(epochs, loss, label=name)
     ax.legend()
     if save:

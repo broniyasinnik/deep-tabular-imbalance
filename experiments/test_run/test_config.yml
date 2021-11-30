@@ -14,8 +14,6 @@ experiments:
   test:
     runner:
       _target_: ClassificationRunner
-    epochs: 1
-    batch_size: 128
     datasets:
       train:
         - *train_file
@@ -25,4 +23,9 @@ experiments:
       _target_: Adam
       lr: 1.0e-2
       weight_decay: 5.0e-5
+    hparams:
+      epochs: 1
+      batch_size: 128
+
+
 
