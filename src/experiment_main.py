@@ -48,14 +48,10 @@ class ExperimentRunner:
             config_file: str,
             targets: List[str],
             logs_folder: str,
-            results_folder: str,
-            visualization_folder: str,
             trial: optuna.Trial = None,
     ):
         self.targets = targets
         self.logs_folder = logs_folder
-        self.results_folder = results_folder
-        self.visualization_folder = visualization_folder
         self.config = get_config(config_file)
         self.trial = trial
         self.experiment_factory = ExperimentFactory(self.config)
@@ -144,7 +140,7 @@ class ExperimentRunner:
 
 def main(argv):
     runner = ExperimentRunner(
-        FLAGS.config, FLAGS.targets, FLAGS.logs_dir, FLAGS.results_dir, FLAGS.visualization_dir
+        FLAGS.config, FLAGS.targets, FLAGS.logs_dir
     )
     runner.run_experiments()
     return 0
