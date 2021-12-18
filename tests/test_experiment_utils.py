@@ -1,5 +1,4 @@
-import pytest
-from experiment_utils import ExperimentFactory
+from src.experiment_utils import ExperimentFactory
 
 
 def test_prepare_experiment(config):

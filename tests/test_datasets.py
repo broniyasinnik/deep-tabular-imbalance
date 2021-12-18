@@ -1,6 +1,5 @@
-import pytest
 import numpy as np
-from datasets import TableDataset, MultiTableDataset
+from src.datasets import TableDataset, MultiTableDataset
 
 
 def test_table_dataset(config):

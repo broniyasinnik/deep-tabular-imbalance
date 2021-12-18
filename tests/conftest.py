@@ -1,6 +1,6 @@
 import pytest
-from experiment_utils import load_config
-from experiment_utils import ExperimentFactory
+from src.experiment_utils import load_config
+from src.experiment_utils import ExperimentFactory
 
 
 @pytest.fixture(name='config')

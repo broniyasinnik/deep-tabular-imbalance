@@ -1,7 +1,6 @@
-import pytest
 import torch
 import numpy as np
-from experiment_utils import get_model, get_train_data
+from src.experiment_utils import get_model, get_train_data
 from ml_collections import ConfigDict
 
 

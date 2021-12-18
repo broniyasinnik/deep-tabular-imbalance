@@ -4,14 +4,13 @@ from pathlib import Path
 from typing import List
 
 import optuna
-import pandas as pd
 from absl import app, flags, logging
 from catalyst import dl, utils
 from catalyst.utils.misc import set_global_seed
 from torch.utils.tensorboard import SummaryWriter
 
-from callabacks import LogPRCurve, SaveSyntheticData
-from evaluation_utils import evaluate_metrics, model_predictions, plot_losses
+from callabacks import LogPRCurve
+from evaluation_utils import evaluate_metrics, model_predictions
 from experiment_utils import (
     ExperimentFactory,
     LoggingMode,

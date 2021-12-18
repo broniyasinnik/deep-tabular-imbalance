@@ -1,7 +1,6 @@
-import pytest
-from datasets import TableDataset
-from evaluation_utils import get_low_confidence_predictions, evaluate_model_predictions
-from experiment_utils import get_model
+from src.datasets import TableDataset
+from src.evaluation_utils import get_low_confidence_predictions, evaluate_model_predictions
+from src.experiment_utils import get_model
 
 
 def test_get_low_confidence_predictions():

@@ -1,7 +1,6 @@
 import os
 from collections import defaultdict
 from itertools import cycle
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -17,10 +16,10 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
-from data_utils import load_arrays
-from datasets import TableDataset
+from src.data_utils import load_arrays
+from src.datasets import TableDataset
 
 COLORS: List[str] = ["aqua", "darkorange", "cornflowerblue", "red", "black", "orange", "blue"]
 

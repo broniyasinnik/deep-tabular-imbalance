@@ -1,5 +1,4 @@
-import pytest
-from runners import MetaClassificationRunner
+from src.runners import MetaClassificationRunner
 
 
 def test_meta_handle_batch(factory):

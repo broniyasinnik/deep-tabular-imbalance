@@ -6,8 +6,8 @@ from evaluation_utils import plot_losses, save_pr_figure
 
 DATASET_NAME = "adult_ir_50"
 EXPERIMENT_NAME = "meta"
-EXPERIMENT_LOG_DIR = Path("./experiments/") / DATASET_NAME / EXPERIMENT_NAME / "logs"
-EXPERIMENT_RESULT_DIR = Path("./experiments/") / DATASET_NAME / EXPERIMENT_NAME / "results"
+EXPERIMENT_LOG_DIR = Path("../experiments/") / DATASET_NAME / EXPERIMENT_NAME / "logs"
+EXPERIMENT_RESULT_DIR = Path("../experiments/") / DATASET_NAME / EXPERIMENT_NAME / "results"
 
 
 def evaluate_emulative():

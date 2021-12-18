@@ -1,11 +1,10 @@
 import io
 import cv2
-import pandas as pd
 import torch
 import os
 import numpy as np
 import torch.nn as nn
-from data_utils import load_arrays
+from src.data_utils import load_arrays
 from torch.utils.data import Dataset, TensorDataset
 from absl import logging
 from datasets import TableDataset

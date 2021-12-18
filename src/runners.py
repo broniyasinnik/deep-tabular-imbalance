@@ -139,7 +139,7 @@ class MetaClassificationRunner(dl.Runner, LoggingMixin):
             pz = self.model(torch.cat([z, x]))
             loss = F.binary_cross_entropy_with_logits(pz, torch.cat([yz, yx]).reshape_as(pz))
             gradients_z = grad(loss, self.model.parameters(), create_graph=True)
-
+            
             ph = self.model(xh, lr=self.hparams["lr_model"], gradients=gradients_z)
             # logits.clamp(min=-10, max=10)
             loss_emulative = F.binary_cross_entropy_with_logits(

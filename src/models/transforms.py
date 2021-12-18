@@ -2,7 +2,6 @@ import torch
 from typing import List
 import numpy as np
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder
-from data_utils import TableConfig
 
 
 class ToTensor(object):
